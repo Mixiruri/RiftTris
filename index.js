@@ -2,7 +2,7 @@
  * @name RiftTris
  * @author Cami (github.com/Mixiruri · Discord @soriita)
  * @description Tetris inside the League client: 5 modes, 25 achievements, 5 skins and a 90-second Rapid mode built for champ select.
- * @version 1.2.0
+ * @version 1.6.0
  */
 
 /* =====================================================================
@@ -13,7 +13,7 @@ const RAPID_MS = 90_000;
 const LOCK_MS = 500;
 const MAX_RESETS = 15;
 const AUTOSAVE_MS = 5000;
-const VERSION = '1.2.0';
+const VERSION = '1.6.0';
 
 const COLS = 10, ROWS = 22, VIS = 20, HIDDEN = ROWS - VIS;
 const CELL = 26;
@@ -30,8 +30,9 @@ const MODES = {
   classic: { name: 'Classic', tag: 'Marathon',   icon: '♛', desc: 'Level up every 10 lines until you top out.' },
   dig:     { name: 'Dig',     tag: '10 rows',    icon: '⛏', desc: 'Break through all the garbage at the bottom.' },
   zen:     { name: 'Zen',     tag: 'Endless',    icon: '☯', desc: 'No pressure, no game over. Perfect for queue time.' },
+  versus:  { name: 'Versus AI', tag: 'Ranked',   icon: '⚔', desc: 'Battle a bot from Iron to Challenger. Clear lines to send garbage.' },
 };
-const MODE_ORDER = ['rapid', 'sprint', 'classic', 'dig', 'zen'];
+const MODE_ORDER = ['rapid', 'sprint', 'classic', 'dig', 'zen', 'versus'];
 const RESUMABLE = new Set(['sprint', 'classic', 'dig', 'zen']);
 
 const ACH = [
@@ -60,7 +61,79 @@ const ACH = [
   { id: 'games25',     name: 'Addicted',         desc: 'Play 25 games.' },
   { id: 'all_modes',   name: 'Fill Player',      desc: 'Finish a game in every mode.' },
   { id: 'skins',       name: 'Skin Collector',   desc: 'Finish a game with every skin.' },
+  { id: 'vs_iron',        name: 'Out of Iron',       desc: 'Beat the Iron AI.' },
+  { id: 'vs_bronze',      name: 'Bronze Breaker',    desc: 'Beat the Bronze AI.' },
+  { id: 'vs_silver',      name: 'Silver Lining',     desc: 'Beat the Silver AI.' },
+  { id: 'vs_gold',        name: 'Gold Rush',         desc: 'Beat the Gold AI.' },
+  { id: 'vs_platinum',    name: 'Platinum Plated',   desc: 'Beat the Platinum AI.' },
+  { id: 'vs_emerald',     name: 'Emerald City',      desc: 'Beat the Emerald AI.' },
+  { id: 'vs_diamond',     name: 'Diamond Hands',     desc: 'Beat the Diamond AI.' },
+  { id: 'vs_master',      name: 'Master Class',      desc: 'Beat the Master AI.' },
+  { id: 'vs_grandmaster', name: 'Grandmaster Flash', desc: 'Beat the Grandmaster AI.' },
+  { id: 'vs_challenger',  name: 'Apex Predator',     desc: 'Beat the Challenger AI.' },
+  { id: 'vs_flawless',    name: 'Flawless Victory',  desc: 'Beat Gold or higher without taking a single garbage line.' },
 ];
+
+// AI ranks: pps = pieces per second, err = chance of a sloppy placement,
+// hold = uses hold, tet = how hard it builds for Tetrises
+const RANKS = [
+  { id: 'iron',        name: 'Iron',        tag: 'I',  color: '#7a716c', pps: 0.45, err: 0.35, hold: false, tet: 0 },
+  { id: 'bronze',      name: 'Bronze',      tag: 'B',  color: '#a86b45', pps: 0.65, err: 0.25, hold: false, tet: 0 },
+  { id: 'silver',      name: 'Silver',      tag: 'S',  color: '#9aa8b2', pps: 0.85, err: 0.18, hold: false, tet: 0 },
+  { id: 'gold',        name: 'Gold',        tag: 'G',  color: '#d9aa45', pps: 1.1,  err: 0.12, hold: true,  tet: 0.3 },
+  { id: 'platinum',    name: 'Platinum',    tag: 'P',  color: '#4fb3a9', pps: 1.35, err: 0.08, hold: true,  tet: 0.5 },
+  { id: 'emerald',     name: 'Emerald',     tag: 'E',  color: '#2fc774', pps: 1.6,  err: 0.05, hold: true,  tet: 0.7 },
+  { id: 'diamond',     name: 'Diamond',     tag: 'D',  color: '#6b82e6', pps: 1.9,  err: 0.03, hold: true,  tet: 0.9 },
+  { id: 'master',      name: 'Master',      tag: 'M',  color: '#b05cf0', pps: 2.3,  err: 0.015, hold: true, tet: 1 },
+  { id: 'grandmaster', name: 'Grandmaster', tag: 'GM', color: '#e2504f', pps: 2.8,  err: 0.005, hold: true, tet: 1 },
+  { id: 'challenger',  name: 'Challenger',  tag: 'C',  color: '#f4d27a', pps: 3.4,  err: 0,     hold: true, tet: 1 },
+];
+const rankDesc = r => r.err >= 0.2 ? 'Makes lots of mistakes' : r.err >= 0.1 ? 'Makes some mistakes' : r.err >= 0.03 ? 'Rarely misplaces' : r.err > 0 ? 'Almost perfect' : 'Perfect placement';
+
+/* =====================================================================
+   ACHIEVEMENT ICONS (24×24, drawn in currentColor)
+   ===================================================================== */
+const F = 'fill="currentColor" stroke="none"';
+const ACH_ICONS = {
+  first_blood: `<path ${F} d="M12 2.5c3.2 4.3 6 7.7 6 11A6 6 0 0 1 6 13.5c0-3.3 2.8-6.7 6-11z"/><path d="M9.2 14.2a2.9 2.9 0 0 0 2.3 2.6" stroke="rgba(0,0,0,.35)"/>`,
+  tetris: `<rect ${F} x="3" y="3" width="18" height="3.4" rx=".8"/><rect ${F} x="3" y="8.2" width="18" height="3.4" rx=".8"/><rect ${F} x="3" y="13.4" width="18" height="3.4" rx=".8"/><rect ${F} x="3" y="18.6" width="18" height="3.4" rx=".8"/>`,
+  pentakill: `<path d="M12 3a7 7 0 0 0-7 7c0 2.4 1.2 4.1 2.5 5.2V18a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-2.8c1.3-1.1 2.5-2.8 2.5-5.2a7 7 0 0 0-7-7z"/><circle ${F} cx="9.2" cy="11" r="1.7"/><circle ${F} cx="14.8" cy="11" r="1.7"/><path d="M10 19v2.5M12 19v2.5M14 19v2.5"/>`,
+  tspin: `<rect ${F} x="4" y="3" width="5" height="5" rx=".6"/><rect ${F} x="9.5" y="3" width="5" height="5" rx=".6"/><rect ${F} x="15" y="3" width="5" height="5" rx=".6"/><rect ${F} x="9.5" y="8.5" width="5" height="5" rx=".6"/><path d="M4.5 16.5a8.5 5 0 0 0 15 0"/><path d="M17 15.8l2.6.7.6-2.7"/>`,
+  tsd: `<path ${F} d="M13.5 2L5 13.5h6.2L10 22l9-12.2h-6.3z"/>`,
+  tst: `<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3.2"/><circle ${F} cx="12" cy="12" r="1"/><path d="M12 2v3.5M12 18.5V22M2 12h3.5M18.5 12H22"/>`,
+  pc: `<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path ${F} d="M12 6.5l1.3 4.2 4.2 1.3-4.2 1.3L12 17.5l-1.3-4.2L6.5 12l4.2-1.3z"/>`,
+  combo5: `<path ${F} d="M12 2c1 3.6 5.5 5.6 5.5 10.5a5.5 5.5 0 0 1-11 0c0-2.4 1.1-4 2.4-5.3.2 1.8 1.1 2.9 2.3 3.3.2-3.3.1-5.6.8-8.5z"/>`,
+  combo10: `<path ${F} d="M3 7.5l4.8 4.3L12 4.5l4.2 7.3L21 7.5 19 17.5H5z"/><rect ${F} x="5" y="19" width="14" height="2" rx=".6"/>`,
+  b2b4: `<path d="M12 2.5v19M3.8 7.2l16.4 9.6M3.8 16.8l16.4-9.6"/><path d="M9.5 3.8L12 6.3l2.5-2.5M9.5 20.2L12 17.7l2.5 2.5M3.4 10.3l3.4.9-.9 3.4M20.6 10.3l-3.4.9.9 3.4"/>`,
+  sprint2: `<circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V9.5M10 2.5h4M12 2.5v3.5M18.6 6.9l1.6-1.6"/>`,
+  sprint1: `<path d="M6.5 3.5h11L21 9l-9 11.5L3 9z"/><path d="M3 9h18M12 20.5L8.3 9l2.2-5.5M12 20.5L15.7 9l-2.2-5.5"/>`,
+  sprint_nh: `<path d="M13.5 2.5L5.5 13.5h6l-1 8 8-11.3h-6z"/><path d="M3 3l18 18" stroke-width="2.2"/>`,
+  rapid10: `<ellipse cx="12" cy="5.5" rx="6.5" ry="2.5"/><path d="M5.5 5.5v4.3c0 1.4 2.9 2.5 6.5 2.5s6.5-1.1 6.5-2.5V5.5M5.5 9.8v4.4c0 1.4 2.9 2.5 6.5 2.5s6.5-1.1 6.5-2.5V9.8M5.5 14.2v4.3c0 1.4 2.9 2.5 6.5 2.5s6.5-1.1 6.5-2.5v-4.3"/>`,
+  rapid30: `<path ${F} d="M18.6 2.6l2.8 2.8-9.9 9.9-2.8-2.8z"/><path d="M7.2 11.8l5 5M9.6 14.4l-5 5"/><circle ${F} cx="3.8" cy="20.2" r="1.4"/>`,
+  champ: `<path d="M6.5 2.5h11M6.5 21.5h11M8 2.5c0 4.2 4 5.6 4 9.5s-4 5.3-4 9.5M16 2.5c0 4.2-4 5.6-4 9.5s4 5.3 4 9.5"/><path ${F} d="M9.3 20.2h5.4L12 16.8z"/>`,
+  lvl10: `<path d="M7.5 21.5V10.5L5.5 8.5v-5h3v2h2v-2h3v2h2v-2h3v5l-2 2v11z"/><path d="M10.5 21.5v-4a1.5 1.5 0 0 1 3 0v4"/>`,
+  lvl15: `<path ${F} d="M20.5 14.8A8.5 8.5 0 1 1 9.2 3.5a6.8 6.8 0 0 0 11.3 11.3z"/><circle ${F} cx="17.5" cy="4.5" r=".9"/><circle ${F} cx="20.5" cy="8" r=".7"/>`,
+  dig: `<path d="M3.5 9C7.5 4.5 16.5 4.5 20.5 9" stroke-width="2.4"/><path d="M12 6v15.5" stroke-width="2.2"/>`,
+  dig45: `<path d="M20.5 3.5l-6.8 6.8M18.5 2l3.5 3.5"/><path d="M13.8 8.7l1.5 1.5c.6.6.6 1.5 0 2.1l-6 6c-1.6 1.6-4.3 1.6-5.3.6s-1-3.7.6-5.3l6-6c.6-.6 1.5-.6 2.1 0z"/>`,
+  zen100: `<path d="M12 20.5c-4.5 0-8.5-2.2-9.5-6.5 3.2-.6 6.5.6 9.5 3.4 3-2.8 6.3-4 9.5-3.4-1 4.3-5 6.5-9.5 6.5z"/><path d="M12 17.4c-2.4-2.8-2.4-7.3 0-11.4 2.4 4.1 2.4 8.6 0 11.4z"/>`,
+  lines1k: `<path d="M8 2.5l3 6.5M16 2.5l-3 6.5"/><circle cx="12" cy="15.5" r="6"/><path ${F} d="M12 12l1 2.2 2.4.3-1.8 1.6.5 2.4-2.1-1.2-2.1 1.2.5-2.4-1.8-1.6 2.4-.3z"/>`,
+  games25: `<path d="M7 8h10a4 4 0 0 1 4 4.6l-.7 3.8a2.3 2.3 0 0 1-4 1.1L15 16H9l-1.3 1.5a2.3 2.3 0 0 1-4-1.1L3 12.6A4 4 0 0 1 7 8z"/><path d="M7.5 10.8v3.4M5.8 12.5h3.4"/><circle ${F} cx="15.5" cy="11.3" r="1"/><circle ${F} cx="17.6" cy="13.4" r="1"/>`,
+  all_modes: `<rect ${F} x="3.5" y="3.5" width="7.5" height="7.5" rx="1"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1"/><rect ${F} x="13" y="13" width="7.5" height="7.5" rx="1"/>`,
+  skins: `<path d="M12 2.8a9.2 9.2 0 1 0 0 18.4c1.3 0 2.1-.8 2.1-1.9 0-1.3-1-1.7-1-2.8 0-1 .8-1.6 1.9-1.6h2.3a4.3 4.3 0 0 0 4.3-4.3c0-4.4-4.3-7.8-9.6-7.8z"/><circle ${F} cx="7.3" cy="11.5" r="1.4"/><circle ${F} cx="9.8" cy="7.2" r="1.4"/><circle ${F} cx="14.8" cy="7.2" r="1.4"/>`,
+};
+const shieldIcon = (tag, inner = '') => `<path d="M12 2.5l7.5 2.8v6.2c0 4.6-3.1 8.3-7.5 10-4.4-1.7-7.5-5.4-7.5-10V5.3z"/>${inner ||
+  `<text x="12" y="${tag.length > 1 ? 14.6 : 15.2}" text-anchor="middle" font-family="Arial, sans-serif" font-weight="700" font-size="${tag.length > 1 ? 6.5 : 8.5}" fill="currentColor" stroke="none">${tag}</text>`}`;
+ACH_ICONS.vs_iron = shieldIcon('I'); ACH_ICONS.vs_bronze = shieldIcon('B'); ACH_ICONS.vs_silver = shieldIcon('S');
+ACH_ICONS.vs_gold = shieldIcon('G'); ACH_ICONS.vs_platinum = shieldIcon('P'); ACH_ICONS.vs_emerald = shieldIcon('E');
+ACH_ICONS.vs_diamond = shieldIcon('D'); ACH_ICONS.vs_master = shieldIcon('M'); ACH_ICONS.vs_grandmaster = shieldIcon('GM');
+ACH_ICONS.vs_challenger = shieldIcon('C', `<path fill="currentColor" stroke="none" d="M7.5 9.5l2.4 2 2.1-3.6 2.1 3.6 2.4-2-1 5.5H8.5z"/>`);
+ACH_ICONS.vs_flawless = shieldIcon('', `<path d="M8.3 11.8l2.6 2.6 4.8-5"/>`);
+// full-color emblem for the ladder screen
+const rankEmblem = (r, size = 34) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}"><defs><linearGradient id="rg-${r.id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${r.color}"/><stop offset="1" stop-color="${r.color}" stop-opacity=".55"/></linearGradient></defs>
+  <path d="M12 2l8 3v6.5c0 4.9-3.3 8.8-8 10.5-4.7-1.7-8-5.6-8-10.5V5z" fill="url(#rg-${r.id})" stroke="rgba(0,0,0,.45)" stroke-width="1"/>
+  <path d="M12 4.2l6 2.3v5c0 3.8-2.5 6.9-6 8.3-3.5-1.4-6-4.5-6-8.3v-5z" fill="none" stroke="rgba(255,255,255,.35)" stroke-width=".8"/>
+  <text x="12" y="${r.tag.length > 1 ? 14.4 : 15.3}" text-anchor="middle" font-family="Arial, sans-serif" font-weight="800" font-size="${r.tag.length > 1 ? 6.5 : 8.5}" fill="#10141c" fill-opacity=".85">${r.tag}</text></svg>`;
+const achIcon = id => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ACH_ICONS[id] || ''}</svg>`;
 
 /* =====================================================================
    COLOR HELPERS
@@ -216,8 +289,9 @@ const sk = () => SKINS[save.settings.skin] || SKINS.hextech;
    PERSISTENCE — Pengu DataStore (survives client restarts) + localStorage mirror
    ===================================================================== */
 const DEFAULT_SAVE = {
-  settings: { das: 133, arr: 33, sdf: 25, ghost: true, champPill: true, autoPause: true, fabPos: null, skin: 'hextech' },
+  settings: { das: 133, arr: 33, sdf: 25, ghost: true, champPill: true, autoPause: true, fabPos: null, skin: 'hextech', sfx: true, sfxVol: 50, music: true, musicVol: 35, muted: false, musicLoop: null },
   best: {}, played: {}, ach: {}, skinsUsed: {}, resume: null, history: [],
+  versus: { beaten: {}, rec: {} },
   totals: { games: 0, lines: 0, tetrises: 0, tspins: 0, playMs: 0, pieces: 0 },
 };
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -225,7 +299,7 @@ const clone = o => JSON.parse(JSON.stringify(o));
 function mergeSave(raw) {
   const s = clone(DEFAULT_SAVE);
   if (raw && typeof raw === 'object') {
-    for (const k of ['settings', 'best', 'played', 'ach', 'skinsUsed', 'totals']) Object.assign(s[k], raw[k] || {});
+    for (const k of ['settings', 'best', 'played', 'ach', 'skinsUsed', 'totals', 'versus']) Object.assign(s[k], raw[k] || {});
     if (raw.resume && typeof raw.resume === 'object') s.resume = raw.resume;
     if (Array.isArray(raw.history)) s.history = raw.history.slice(0, 20);
   }
@@ -246,6 +320,400 @@ function persist() {
   try { window.DataStore?.set(SAVE_KEY, clone(save)); } catch {}
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch {}
 }
+
+/* =====================================================================
+   SOUND — synthesized with Web Audio, no files needed
+   ===================================================================== */
+const SKIN_WAVE = { hextech: 'triangle', retro: 'square', cube: 'triangle', neon: 'sawtooth', pastel: 'sine' };
+const semi = (f, k) => f * Math.pow(2, k / 12);
+
+const Sfx = {
+  ctx: null, bus: null, filter: null, noiseBuf: null, lastMove: 0,
+
+  ready() {
+    if (save.settings.muted || !save.settings.sfx || save.settings.sfxVol <= 0) return false;
+    return this.ensure();
+  },
+
+  ensure() {
+    try {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return false;
+        this.ctx = new AC();
+        this.filter = this.ctx.createBiquadFilter();
+        this.filter.type = 'lowpass';
+        this.bus = this.ctx.createGain();
+        this.bus.connect(this.filter);
+        this.filter.connect(this.ctx.destination);
+        const len = this.ctx.sampleRate * 0.5;
+        this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+        const d = this.noiseBuf.getChannelData(0);
+        for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      this.bus.gain.value = (save.settings.sfxVol / 100) * 0.7;
+      this.filter.frequency.value = save.settings.skin === 'neon' ? 2400 : save.settings.skin === 'pastel' ? 3000 : 6000;
+      return true;
+    } catch { return false; }
+  },
+
+  tone(f, t0, dur, o = {}) {
+    const c = this.ctx, osc = c.createOscillator(), g = c.createGain();
+    osc.type = o.type || SKIN_WAVE[save.settings.skin] || 'triangle';
+    osc.frequency.setValueAtTime(f, t0);
+    if (o.to) osc.frequency.exponentialRampToValueAtTime(o.to, t0 + dur);
+    const v = o.vol ?? 0.15;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(v, t0 + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g); g.connect(this.bus);
+    osc.start(t0); osc.stop(t0 + dur + 0.03);
+  },
+
+  noise(t0, dur, o = {}) {
+    const c = this.ctx, src = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+    src.buffer = this.noiseBuf;
+    f.type = o.high ? 'highpass' : 'lowpass';
+    f.frequency.value = o.freq || 800;
+    g.gain.setValueAtTime(o.vol ?? 0.2, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(f); f.connect(g); g.connect(this.bus);
+    src.start(t0); src.stop(t0 + dur + 0.02);
+  },
+
+  arp(notes, t0, step, dur, o) { notes.forEach((f, i) => this.tone(f, t0 + i * step, dur, o)); },
+
+  play(name, d = {}) {
+    if (!this.ready()) return;
+    const t = this.ctx.currentTime + 0.005;
+    switch (name) {
+      case 'move': {
+        const now = performance.now();
+        if (now - this.lastMove < 30) return;
+        this.lastMove = now;
+        return this.tone(440, t, 0.035, { vol: 0.05 });
+      }
+      case 'rotate': return this.tone(620, t, 0.05, { to: 720, vol: 0.06 });
+      case 'hold': this.tone(392, t, 0.06, { vol: 0.07 }); return this.tone(587, t + 0.05, 0.08, { vol: 0.07 });
+      case 'land': {
+        if (d.hard) { this.noise(t, 0.06, { vol: 0.16, freq: 700 }); this.tone(150, t, 0.09, { to: 60, vol: 0.12, type: 'sine' }); }
+        if (!d.n) {
+          if (!d.hard) this.tone(170, t, 0.045, { vol: 0.06 });
+          if (d.tspin) this.tone(392, t, 0.12, { to: 784, vol: 0.07 });
+          return;
+        }
+        const b = semi(523.25, Math.min(Math.max(d.combo, 0), 12));
+        const t1 = t + (d.hard ? 0.03 : 0);
+        const chord = [b, semi(b, 4), semi(b, 7), b * 2];
+        if (d.pc) { this.arp([b, semi(b, 4), semi(b, 7), b * 2, semi(b * 2, 4), semi(b * 2, 7), b * 4], t1, 0.06, 0.28, { vol: 0.11 }); return; }
+        if (d.tspin) {
+          this.tone(semi(b, -5), t1, 0.2, { to: b * 1.5, vol: 0.08, type: 'sine' });
+          this.arp(chord.slice(0, d.n + 1), t1 + 0.05, 0.055, 0.16, { vol: 0.1 });
+        } else {
+          this.arp(chord.slice(0, d.n), t1, 0.055, d.n === 4 ? 0.22 : 0.14, { vol: 0.1 });
+          if (d.n === 4) { this.tone(b * 4, t1 + 0.22, 0.35, { vol: 0.04, type: 'sine' }); this.noise(t1 + 0.18, 0.2, { vol: 0.05, freq: 5000, high: true }); }
+        }
+        if (d.b2b > 0) this.tone(semi(b * 2, 4), t1 + 0.28, 0.2, { vol: 0.07, type: 'sine' });
+        return;
+      }
+      case 'level': return this.arp([659, 784, 988, 1319], t, 0.07, 0.14, { vol: 0.1 });
+      case 'count': return this.tone(440, t, 0.1, { vol: 0.09 });
+      case 'go': return this.tone(880, t, 0.2, { vol: 0.1 });
+      case 'tick': return this.tone(1200, t, 0.05, { vol: 0.07, type: 'square' });
+      case 'topout': return this.arp([392, 330, 262, 196], t, 0.13, 0.25, { vol: 0.1 });
+      case 'zenreset': return this.arp([523, 392], t, 0.09, 0.16, { vol: 0.08 });
+      case 'win': return this.arp([523, 659, 784, 1047, 1319], t, 0.075, 0.24, { vol: 0.1 });
+      case 'ach': this.tone(988, t, 0.4, { type: 'sine', vol: 0.12 }); return this.tone(1319, t + 0.09, 0.5, { type: 'sine', vol: 0.1 });
+      case 'pause': return this.tone(330, t, 0.07, { vol: 0.06 });
+      case 'resume': return this.tone(494, t, 0.07, { vol: 0.06 });
+      case 'ui': return this.tone(760, t, 0.03, { vol: 0.03 });
+      case 'test': return this.arp([523, 659, 784], t, 0.06, 0.12, { vol: 0.1 });
+      case 'send': this.tone(300, t, 0.18, { to: 1200, vol: 0.06, type: 'sawtooth' }); return this.noise(t, 0.15, { vol: 0.05, freq: 3000, high: true });
+      case 'garbage': this.noise(t, 0.18, { vol: 0.14, freq: 400 }); return this.tone(90, t, 0.22, { to: 55, vol: 0.14, type: 'sine' });
+      case 'warn': return this.arp([880, 660], t, 0.08, 0.08, { vol: 0.06, type: 'square' });
+      case 'ko': this.noise(t, 0.3, { vol: 0.12, freq: 900 }); return this.arp([784, 988, 1175, 1568], t + 0.05, 0.06, 0.25, { vol: 0.1 });
+    }
+  },
+};
+
+/* =====================================================================
+   MUSIC — plays music.mp3 from the plugin folder if present,
+   otherwise a built-in chiptune of Korobeiniki (public-domain folk tune)
+   ===================================================================== */
+const MUSIC_URL = (() => { try { return new URL('./music.mp3', import.meta.url).href; } catch { return null; } })();
+const NOTE_SEMI = { C: 0, 'C#': 1, D: 2, 'D#': 3, E: 4, F: 5, 'F#': 6, G: 7, 'G#': 8, A: 9, 'A#': 10, B: 11 };
+const midiOf = n => { const m = /^([A-G]#?)(\d)$/.exec(n); return (+m[2] + 1) * 12 + NOTE_SEMI[m[1]]; };
+const freqOf = m => 440 * Math.pow(2, (m - 69) / 12);
+
+const MELODY_A = [
+  ['E5', 1], ['B4', .5], ['C5', .5], ['D5', 1], ['C5', .5], ['B4', .5],
+  ['A4', 1], ['A4', .5], ['C5', .5], ['E5', 1], ['D5', .5], ['C5', .5],
+  ['B4', 1.5], ['C5', .5], ['D5', 1], ['E5', 1],
+  ['C5', 1], ['A4', 1], ['A4', 1], [null, 1],
+  [null, .5], ['D5', 1], ['F5', .5], ['A5', 1], ['G5', .5], ['F5', .5],
+  ['E5', 1.5], ['C5', .5], ['E5', 1], ['D5', .5], ['C5', .5],
+  ['B4', 1], ['B4', .5], ['C5', .5], ['D5', 1], ['E5', 1],
+  ['C5', 1], ['A4', 1], ['A4', 1], [null, 1],
+];
+const MELODY_B = [
+  ['E5', 2], ['C5', 2], ['D5', 2], ['B4', 2], ['C5', 2], ['A4', 2], ['G#4', 2], ['B4', 2],
+  ['E5', 2], ['C5', 2], ['D5', 2], ['B4', 2], ['C5', 1], ['E5', 1], ['A5', 2], ['G#5', 4],
+];
+const BASS_A = ['E2', 'A2', 'G#2', 'A2', 'D2', 'C2', 'G#2', 'A2'];
+const BASS_B = ['A2', 'E2', 'A2', 'E2', 'A2', 'E2', 'A2', 'E2'];
+
+const SONG = (() => {
+  const ev = [];
+  let beat = 0;
+  const lead = mel => { for (const [n, b] of mel) { if (n) ev.push({ beat, midi: midiOf(n), len: b, lead: true }); beat += b; } };
+  const bass = (roots, start) => roots.forEach((r, bar) => {
+    const m = midiOf(r);
+    for (let i = 0; i < 8; i++) ev.push({ beat: start + bar * 4 + i * 0.5, midi: m + (i % 2 ? 12 : 0), len: 0.45, lead: false });
+  });
+  for (const part of ['A', 'A', 'B']) {
+    const start = beat;
+    if (part === 'A') { bass(BASS_A, start); lead(MELODY_A); }
+    else { bass(BASS_B, start); lead(MELODY_B); }
+  }
+  ev.sort((a, b) => a.beat - b.beat);
+  return { events: ev, length: beat, bpm: 150 };
+})();
+
+/* ---------- seamless loop finder for music.mp3 ---------- */
+async function findLoop(buf) {
+  const sr = buf.sampleRate, n = buf.length;
+  const L = buf.getChannelData(0), R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L;
+  // trim silence
+  const th = 0.01;
+  let a = 0; while (a < n && Math.abs(L[a]) < th && Math.abs(R[a]) < th) a++;
+  let b = n - 1; while (b > a && Math.abs(L[b]) < th && Math.abs(R[b]) < th) b--;
+  const start = a / sr, end = (b + 1) / sr;
+  const res = { start, end, loopStart: start, loopEnd: end, match: 0 };
+  if (end - start < 12) return res;
+
+  const zncc = (x, i0, j0, w, step) => {
+    let sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, c = 0;
+    for (let k = 0; k < w; k += step) { const u = x[i0 + k], v = x[j0 + k]; sx += u; sy += v; sxx += u * u; syy += v * v; sxy += u * v; c++; }
+    const cov = sxy - sx * sy / c, vx = sxx - sx * sx / c, vy = syy - sy * sy / c;
+    return vx > 0 && vy > 0 ? cov / Math.sqrt(vx * vy) : 0;
+  };
+  // coarse pass: loudness envelope in 5 ms blocks (finds where the same phrase comes back)
+  const B = Math.max(1, Math.round(sr / 200)), ne = Math.floor(n / B), env = new Float32Array(ne);
+  for (let k = 0; k < ne; k++) { let acc = 0; for (let j = k * B, e = j + B; j < e; j++) acc += Math.abs(L[j]) + Math.abs(R[j]); env[k] = acc / (2 * B); }
+  const esr = sr / B, ref = Math.floor((start + 0.05) * esr), W = Math.floor(3 * esr);
+  const lo = Math.max(ref + W, Math.floor((end - 45) * esr)), hi = Math.floor((end - 3.2) * esr);
+  const sc = [];
+  let best = -1;
+  for (let i = lo; i < hi; i++) { const r = zncc(env, ref, i, W, 1); sc.push(r); if (r > best) best = r; }
+  if (best < 0.35) return res;
+  const cands = [];
+  for (let k = 1; k < sc.length - 1; k++)
+    if (sc[k] >= best * 0.9 && sc[k] >= sc[k - 1] && sc[k] >= sc[k + 1]) cands.push(lo + k);
+  cands.sort((x, y) => y - x);   // latest first → longest loop
+  await new Promise(r2 => setTimeout(r2, 0));
+  // fine pass at full rate around each candidate
+  const mono = new Float32Array(n);
+  for (let i = 0; i < n; i++) mono[i] = (L[i] + R[i]) * 0.5;
+  const refF = Math.floor((start + 0.05) * sr), WF = Math.floor(1 * sr);
+  let fb = -1, fi = -1;
+  for (const c of cands.slice(0, 4)) {
+    const c0 = Math.round(c * B);
+    let cb = -1, ci = c0;
+    for (let i = c0 - 1400; i <= c0 + 1400; i++) {
+      if (i < 0 || i + WF >= n) continue;
+      const r = zncc(mono, refF, i, WF, 2);
+      if (r > cb) { cb = r; ci = i; }
+    }
+    if (cb > fb) { fb = cb; fi = ci; }
+    if (cb >= 0.6) { fb = cb; fi = ci; break; }
+    await new Promise(r2 => setTimeout(r2, 0));
+  }
+  if (fb < 0.45) return res;
+  res.loopStart = refF / sr; res.loopEnd = fi / sr; res.match = fb;
+  return res;
+}
+
+const Music = {
+  missing: !MUSIC_URL, playing: false, fresh: true, rate: 1,
+  buf: null, loading: null, info: null, out: null, segs: [], timer: 0, seg: null, pos: 0,
+  syn: { timer: 0, anchorT: 0, anchorBeat: 0, pausedBeat: 0, idx: 0, loop: 0, out: null },
+
+  vol() { const st = save.settings; return st.muted || !st.music ? 0 : st.musicVol / 100; },
+
+  load() {
+    if (this.loading || this.missing) return this.loading;
+    if (!Sfx.ensure()) return null;
+    this.loading = (async () => {
+      try {
+        const r = await fetch(MUSIC_URL);
+        if (!r.ok) throw new Error('no music.mp3');
+        const data = await r.arrayBuffer();
+        this.buf = await new Promise((ok, bad) => Sfx.ctx.decodeAudioData(data, ok, bad));
+        const key = `${this.buf.length}:${this.buf.sampleRate}`;
+        const cached = save.settings.musicLoop;
+        if (cached && cached.key === key) this.info = cached;
+        else { this.info = { ...(await findLoop(this.buf)), key }; save.settings.musicLoop = this.info; persist(); }
+      } catch (err) {
+        this.missing = true; this.buf = null;
+      }
+      if (this.playing) { this.playing = false; this.start(); }
+    })();
+    return this.loading;
+  },
+
+  start() {
+    if (this.vol() <= 0) return;
+    const fromStart = this.fresh;
+    this.playing = true;
+    if (this.missing) { this.fresh = false; return this.synthStart(fromStart); }
+    if (!this.buf) { this.load(); return; }   // starts itself once decoded
+    this.fresh = false;
+    if (!Sfx.ensure()) return;
+    const ctx = Sfx.ctx;
+    this.killSegs(0.05);
+    this.out = ctx.createGain();
+    this.out.gain.value = this.vol() * 0.8;
+    this.out.connect(ctx.destination);
+    const i = this.info;
+    let off = fromStart ? i.start : this.pos;
+    if (off < i.start || off >= i.loopEnd - 0.05) off = i.start;
+    this.segment(ctx.currentTime + 0.03, off, fromStart ? 1.2 : 0.35);
+  },
+
+  // plays from `off` to the loop end, then hands over to the next segment with a crossfade
+  segment(t, off, fadeIn) {
+    const ctx = Sfx.ctx, i = this.info;
+    const matched = i.match > 0;
+    const XF = matched ? 0.06 : 1.8;
+    const src = ctx.createBufferSource(), g = ctx.createGain();
+    src.buffer = this.buf;
+    src.connect(g); g.connect(this.out);
+    const endT = t + (i.loopEnd - off);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(1, t + Math.max(0.01, fadeIn));
+    g.gain.setValueAtTime(1, Math.max(t + fadeIn, endT - XF));
+    g.gain.linearRampToValueAtTime(0, endT);
+    src.start(t, off);
+    src.stop(endT + 0.05);
+    const seg = { src, g, t, off };
+    this.segs.push(seg);
+    this.seg = seg;
+    src.onended = () => { this.segs = this.segs.filter(x => x !== seg); };
+    const nextT = endT - XF, nextOff = matched ? i.loopStart - XF : i.start;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => { if (this.playing && this.out) this.segment(nextT, nextOff, XF); },
+      Math.max(0, (nextT - ctx.currentTime - 0.5) * 1000));
+  },
+
+  killSegs(fade) {
+    const ctx = Sfx.ctx;
+    clearTimeout(this.timer); this.timer = 0;
+    if (ctx && this.seg) {
+      const p = this.seg.off + (ctx.currentTime - this.seg.t);
+      if (p >= this.seg.off) this.pos = p;
+    }
+    for (const sg of this.segs) {
+      try {
+        sg.g.gain.cancelScheduledValues(ctx.currentTime);
+        sg.g.gain.setValueAtTime(sg.g.gain.value, ctx.currentTime);
+        sg.g.gain.linearRampToValueAtTime(0, ctx.currentTime + fade);
+        sg.src.stop(ctx.currentTime + fade + 0.02);
+      } catch {}
+    }
+    this.segs = []; this.seg = null;
+    const o = this.out; this.out = null;
+    if (o) setTimeout(() => { try { o.disconnect(); } catch {} }, (fade + 0.1) * 1000);
+  },
+
+  pause(fade = 0.18) {
+    this.playing = false;
+    this.killSegs(fade);
+    this.synthStop();
+  },
+
+  stop() { this.pause(0.6); this.fresh = true; this.pos = 0; },
+
+  setRate(r) {
+    if (Math.abs(r - this.rate) < 0.001) return;
+    const sy = this.syn, ctx = Sfx.ctx;
+    if (sy.timer && ctx) { sy.anchorBeat = this.curBeat(); sy.anchorT = ctx.currentTime; }
+    this.rate = r;   // only the built-in chiptune speeds up; the mp3 keeps its pitch
+  },
+
+  refresh() {
+    const v = this.vol();
+    if (v <= 0) { if (this.playing) this.pause(); return; }
+    if (this.out) this.out.gain.value = v * 0.8;
+    if (this.syn.out) this.syn.out.gain.value = v * 0.35;
+  },
+
+  spb() { return 60 / (SONG.bpm * this.rate); },
+  curBeat() { const sy = this.syn; return sy.anchorBeat + (Sfx.ctx.currentTime - sy.anchorT) / this.spb(); },
+
+  synthStart(fromStart) {
+    if (!Sfx.ensure()) return;
+    const ctx = Sfx.ctx, sy = this.syn;
+    this.synthStop();
+    if (fromStart) sy.pausedBeat = 0;
+    const out = ctx.createGain();
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = save.settings.skin === 'neon' ? 2600 : 3800;
+    out.gain.value = this.vol() * 0.35;
+    out.connect(lp); lp.connect(ctx.destination);
+    sy.out = out;
+    const L = SONG.length;
+    sy.loop = Math.floor(sy.pausedBeat / L);
+    const within = sy.pausedBeat - sy.loop * L;
+    sy.idx = SONG.events.findIndex(e => e.beat >= within - 1e-6);
+    if (sy.idx < 0) { sy.idx = 0; sy.loop++; }
+    sy.anchorBeat = sy.pausedBeat;
+    sy.anchorT = ctx.currentTime + 0.06;
+    sy.timer = setInterval(() => this.tick(), 40);
+    this.tick();
+  },
+
+  synthStop() {
+    const sy = this.syn, ctx = Sfx.ctx;
+    if (!sy.timer) return;
+    clearInterval(sy.timer); sy.timer = 0;
+    if (ctx) sy.pausedBeat = Math.max(0, this.curBeat());
+    if (sy.out && ctx) {
+      const o = sy.out;
+      o.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
+      setTimeout(() => { try { o.disconnect(); } catch {} }, 200);
+    }
+    sy.out = null;
+  },
+
+  tick() {
+    const sy = this.syn, ctx = Sfx.ctx;
+    if (!sy.timer || !ctx || !sy.out) return;
+    const now = ctx.currentTime, ahead = now + 0.3, spb = this.spb(), L = SONG.length;
+    const wave = SKIN_WAVE[save.settings.skin] || 'triangle';
+    for (let guard = 0; guard < 64; guard++) {
+      const e = SONG.events[sy.idx];
+      const t = sy.anchorT + (e.beat + sy.loop * L - sy.anchorBeat) * spb;
+      if (t > ahead) break;
+      if (t >= now - 0.02) this.voice(e, Math.max(t, now), e.len * spb, wave);
+      if (++sy.idx >= SONG.events.length) { sy.idx = 0; sy.loop++; }
+    }
+  },
+
+  voice(e, t, dur, wave) {
+    const ctx = Sfx.ctx, osc = ctx.createOscillator(), g = ctx.createGain();
+    osc.type = e.lead ? wave : (wave === 'square' ? 'square' : 'triangle');
+    osc.frequency.value = freqOf(e.midi);
+    const v = e.lead ? (wave === 'sine' ? 0.5 : wave === 'triangle' ? 0.42 : 0.2) : (wave === 'square' ? 0.12 : 0.3);
+    const d = Math.max(0.05, dur * 0.92);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(v, t + 0.01);
+    g.gain.setValueAtTime(v, t + d * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    osc.connect(g); g.connect(this.syn.out);
+    osc.start(t); osc.stop(t + d + 0.02);
+  },
+};
 
 /* =====================================================================
    PIECES + SRS
@@ -289,6 +757,8 @@ const KICK_180 = [[0,0],[0,1],[1,0],[-1,0],[0,-1]];
 class Game {
   constructor(mode, hooks) { this.mode = mode; this.hooks = hooks; this.sdf = 25; this.reset(); }
 
+  fx(name, d) { try { this.hooks.sfx?.(name, d); } catch {} }
+
   reset() {
     this.board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
     this.bag = []; this.queue = [];
@@ -297,7 +767,8 @@ class Game {
     this.score = 0; this.lines = 0; this.level = 1;
     this.combo = -1; this.b2b = -1;
     this.stats = { pieces: 0, tetrises: 0, tspins: 0, holds: 0, maxCombo: 0, pcs: 0 };
-    this.elapsed = 0; this.countdown = 1500;
+    this.elapsed = 0; this.countdown = 1500; this.lastCount = 0; this.lastTick = 0; this.hardFlag = false;
+    this.incoming = []; this.sent = 0; this.received = 0;
     this.over = false; this.won = false; this.paused = false;
     this.gTimer = 0; this.lockTimer = 0; this.lockResets = 0; this.lowest = 0;
     this.soft = false; this.lastRot = false; this.lastKick = 0;
@@ -318,7 +789,7 @@ class Game {
     const g = new Game(snap.mode, hooks);
     for (const k of ['board', 'bag', 'queue', 'hold', 'canHold', 'score', 'lines', 'level', 'combo', 'b2b', 'stats', 'elapsed'])
       if (snap[k] !== undefined) g[k] = clone(snap[k]);
-    g.countdown = 1500;
+    g.countdown = 1500; g.lastCount = 0;
     const p = snap.piece;
     if (p && ROT[p.t] && !g.collide(p.t, p.r, p.x, p.y)) { g.piece = { ...p }; g.lowest = p.y; }
     else g.spawn();
@@ -341,6 +812,24 @@ class Game {
       const row = Array(COLS).fill('G'); row[hole] = 0;
       this.board.shift(); this.board.push(row);
     }
+  }
+
+  receive(n) {
+    if (n <= 0 || this.over) return;
+    this.incoming.push({ n, hole: (Math.random() * COLS) | 0 });
+  }
+  pending() { return this.incoming.reduce((a, c) => a + c.n, 0); }
+
+  // pushes k garbage rows from the bottom; returns true if blocks got pushed off the top
+  pushGarbage(k, hole) {
+    let overflow = false;
+    for (let i = 0; i < k; i++) {
+      if (this.board[0].some(Boolean)) overflow = true;
+      this.board.shift();
+      const row = Array(COLS).fill('G'); row[hole] = 0;
+      this.board.push(row);
+    }
+    return overflow;
   }
 
   collide(t, r, x, y) {
@@ -370,6 +859,7 @@ class Game {
       this.board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
       this.combo = -1; this.b2b = -1;
       this.popup('ZEN RESET', sk().accent);
+      this.fx('zenreset');
       return this.spawn();
     }
     this.finish(false);
@@ -383,6 +873,7 @@ class Game {
     const p = this.piece;
     if (!p || this.over || this.collide(p.t, p.r, p.x + dx, p.y)) return false;
     p.x += dx; this.lastRot = false; this.onMoved();
+    this.fx('move');
     return true;
   }
 
@@ -405,6 +896,7 @@ class Game {
         p.x = nx; p.y = ny; p.r = to;
         this.lastRot = true; this.lastKick = i;
         this.onMoved();
+        this.fx('rotate');
         return true;
       }
     }
@@ -415,6 +907,7 @@ class Game {
     if (!this.piece || this.over) return;
     let n = 0; while (this.fall()) n++;
     this.score += n * 2;
+    this.hardFlag = true;
     this.lock();
   }
 
@@ -422,6 +915,7 @@ class Game {
     if (!this.canHold || !this.piece || this.over) return;
     const cur = this.piece.t;
     this.canHold = false; this.stats.holds++;
+    this.fx('hold');
     if (this.hold) { const t = this.hold; this.hold = cur; this.spawn(t); }
     else { this.hold = cur; this.spawn(); }
   }
@@ -502,10 +996,43 @@ class Game {
 
     if (this.mode === 'classic') {
       const nl = Math.min(1 + Math.floor(this.lines / 10), 20);
-      if (nl > this.level) { this.level = nl; this.popup(`LEVEL ${nl}`, S.label); }
+      if (nl > this.level) { this.level = nl; this.popup(`LEVEL ${nl}`, S.label); this.fx('level'); }
     }
 
+    this.fx('land', { n, tspin, mini, pc, hard: this.hardFlag, combo: this.combo, b2b: this.b2b });
+    this.hardFlag = false;
     this.hooks.onClear?.(this, { n, tspin, mini, pc });
+
+    if (this.mode === 'versus') {
+      if (n > 0) {
+        let atk = tspin ? (mini ? [0, 0, 1][n] || 0 : [0, 2, 4, 6][n]) : [0, 0, 1, 2, 4][n];
+        if (difficult && this.b2b > 0) atk += 1;
+        atk += COMBO_ATK[Math.min(this.combo, COMBO_ATK.length - 1)];
+        if (pc) atk += 10;
+        while (atk > 0 && this.incoming.length) {
+          const c = this.incoming[0], k = Math.min(atk, c.n);
+          c.n -= k; atk -= k;
+          if (!c.n) this.incoming.shift();
+        }
+        if (atk > 0) {
+          this.sent += atk;
+          this.popup(`+${atk} SENT`, S.warn);
+          this.fx('send', { n: atk });
+          this.hooks.onAttack?.(this, atk);
+        }
+      } else if (this.incoming.length) {
+        let cap = 8, took = 0, overflow = false;
+        while (cap > 0 && this.incoming.length) {
+          const c = this.incoming[0], k = Math.min(cap, c.n);
+          if (this.pushGarbage(k, c.hole)) overflow = true;
+          c.n -= k; cap -= k; took += k;
+          if (!c.n) this.incoming.shift();
+        }
+        this.received += took;
+        this.fx('garbage', { n: took });
+        if (overflow) return this.finish(false);
+      }
+    }
 
     if (this.mode === 'sprint' && this.lines >= 40) return this.finish(true);
     if (this.mode === 'dig' && !this.board.some(r => r.includes('G'))) return this.finish(true);
@@ -527,12 +1054,24 @@ class Game {
   update(dt) {
     this.tickFx(dt);
     if (this.over || this.paused) return;
-    if (this.countdown > 0) { this.countdown -= dt; return; }
+    if (this.countdown > 0) {
+      const c = Math.ceil(this.countdown / 500);
+      if (c !== this.lastCount) { this.lastCount = c; this.fx('count'); }
+      this.countdown -= dt;
+      if (this.countdown <= 0) this.fx('go');
+      return;
+    }
     this.elapsed += dt;
 
+    if (this.mode === 'versus') {
+      const nl = Math.min(1 + Math.floor(this.elapsed / 30000), 10);
+      if (nl > this.level) { this.level = nl; this.popup('SPEED UP!', sk().colors.L); this.fx('level'); }
+    }
     if (this.mode === 'rapid') {
       const nl = Math.min(1 + Math.floor(this.elapsed / 10000), 10);
-      if (nl > this.level) { this.level = nl; this.popup('SPEED UP!', sk().colors.L); }
+      if (nl > this.level) { this.level = nl; this.popup('SPEED UP!', sk().colors.L); this.fx('level'); }
+      const left = Math.ceil((RAPID_MS - this.elapsed) / 1000);
+      if (left <= 5 && left > 0 && left !== this.lastTick) { this.lastTick = left; this.fx('tick'); }
       if (this.elapsed >= RAPID_MS) { this.elapsed = RAPID_MS; return this.finish(true); }
     }
     if (!this.piece) return;
@@ -560,7 +1099,135 @@ class Game {
   finish(won) {
     if (this.over) return;
     this.over = true; this.won = won;
+    this.fx(won ? 'win' : 'topout');
     this.hooks.onFinish?.(this);
+  }
+}
+
+const COMBO_ATK = [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 5];
+
+/* =====================================================================
+   AI OPPONENT — El-Tetris style board evaluation + rank-based speed and mistakes
+   ===================================================================== */
+let TET_W = 1, TET_H = 8;
+function evalBoard(b, placed, n, tet) {
+  let rowT = 0, colT = 0, holes = 0, wells = 0, well9 = 0;
+  const heights = new Array(COLS).fill(0);
+  for (let y = 0; y < ROWS; y++) {
+    let prev = true;
+    for (let x = 0; x < COLS; x++) {
+      const f = !!b[y][x];
+      if (f !== prev) rowT++;
+      prev = f;
+      if (f && !heights[x]) heights[x] = ROWS - y;
+    }
+    if (!prev) rowT++;
+  }
+  for (let x = 0; x < COLS; x++) {
+    let prev = false, seen = false;
+    for (let y = 0; y < ROWS; y++) {
+      const f = !!b[y][x];
+      if (f !== prev) colT++;
+      prev = f;
+      if (f) seen = true; else if (seen) holes++;
+    }
+    if (!prev) colT++;
+    let depth = 0;
+    for (let y = 0; y < ROWS; y++) {
+      const f = !!b[y][x];
+      const l = x === 0 || !!b[y][x - 1], r = x === COLS - 1 || !!b[y][x + 1];
+      if (!f && l && r) { depth++; wells += depth; if (x === COLS - 1) well9 += depth; }
+      else if (f) depth = 0;
+    }
+  }
+  const maxH = Math.max(...heights);
+  const landing = ROWS - placed.reduce((a, c) => a + c[1], 0) / placed.length;
+  let score = -4.5 * landing + 3.42 * n - 3.22 * rowT - 9.35 * colT - 7.9 * holes - 3.39 * wells;
+  if (tet > 0 && maxH < TET_H) {
+    // build for Tetrises: keep the right column open as a well and hold out for 4-line clears
+    let wellRows = 0;
+    for (let y = 0; y < ROWS; y++) if (!b[y][COLS - 1] && b[y].some(Boolean)) wellRows++;
+    score += (3.39 * well9 + 3.22 * wellRows + 9.35) * tet * TET_W;
+    if (n === 4) score += 60 * tet * TET_W;
+    else if (n > 0) score -= 18 * tet * TET_W * (maxH < 9 ? 1 : 0.35);
+    if (n < 4 && placed.some(c => c[0] === COLS - 1)) score -= 12 * tet * TET_W;
+  }
+  return score;
+}
+
+class Bot {
+  constructor(game, rank) { this.g = game; this.r = rank; this.plan = null; this.t = 0; }
+
+  spawnOf(t) { return { x: t === 'O' ? 4 : 3, y: 1 }; }
+
+  options(t, useHold) {
+    const g = this.g, out = [], seen = new Set();
+    const sp = this.spawnOf(t);
+    for (let r = 0; r < 4; r++) {
+      if (g.collide(t, r, sp.x, sp.y)) continue;
+      for (let x = -2; x < COLS; x++) {
+        // reachable by sliding sideways from spawn
+        const dir = Math.sign(x - sp.x);
+        let ok = true;
+        for (let cx = sp.x; cx !== x; cx += dir) if (g.collide(t, r, cx + dir, sp.y)) { ok = false; break; }
+        if (!ok || g.collide(t, r, x, sp.y)) continue;
+        let y = sp.y;
+        while (!g.collide(t, r, x, y + 1)) y++;
+        const cells = ROT[t][r].map(([cx, cy]) => [x + cx, y + cy]);
+        const key = cells.map(c => c.join(',')).sort().join('|');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const b = g.board.map(row => row.slice());
+        for (const [cx, cy] of cells) if (cy >= 0) b[cy][cx] = t;
+        let n = 0;
+        for (let yy = 0; yy < ROWS; yy++) if (b[yy].every(Boolean)) { b.splice(yy, 1); b.unshift(Array(COLS).fill(0)); n++; }
+        out.push({ t, r, x, hold: useHold, score: evalBoard(b, cells, n, g.pending() >= 3 ? 0 : this.r.tet) + (Math.random() - 0.5) * 0.01 });
+      }
+    }
+    return out;
+  }
+
+  decide() {
+    const g = this.g;
+    let opts = this.options(g.piece.t, false);
+    if (this.r.hold && g.canHold) {
+      const ht = g.hold || g.queue[0];
+      if (ht && ht !== g.piece.t) opts = opts.concat(this.options(ht, true));
+    }
+    if (!opts.length) return ['drop'];
+    opts.sort((a, b) => b.score - a.score);
+    const pick = Math.random() < this.r.err ? opts[(Math.random() * Math.min(6, opts.length)) | 0] : opts[0];
+    const plan = [];
+    if (pick.hold) plan.push('hold');
+    if (pick.r === 1) plan.push('cw'); else if (pick.r === 2) plan.push('cw', 'cw'); else if (pick.r === 3) plan.push('ccw');
+    plan.push({ x: pick.x }, 'drop');
+    return plan;
+  }
+
+  update(dt) {
+    const g = this.g;
+    if (g.over || g.paused || g.countdown > 0 || !g.piece) return;
+    const pieceMs = 1000 / this.r.pps;
+    const step = Math.max(22, Math.min(140, pieceMs * 0.09));
+    if (!this.plan) {
+      this.plan = this.decide();
+      const actions = this.plan.length + 2;
+      this.t = -Math.max(0, pieceMs - actions * step) * (0.85 + Math.random() * 0.3);
+    }
+    this.t += dt;
+    let guard = 0;
+    while (this.t >= 0 && this.plan && g.piece && !g.over && guard++ < 30) {
+      const a = this.plan[0];
+      if (a === 'hold') { g.holdPiece(); this.plan.shift(); }
+      else if (a === 'cw') { g.rotate(1); this.plan.shift(); }
+      else if (a === 'ccw') { g.rotate(-1); this.plan.shift(); }
+      else if (a === 'drop') { this.plan = null; g.hardDrop(); break; }
+      else {
+        const p = g.piece;
+        if (p.x === a.x || !g.move(Math.sign(a.x - p.x))) this.plan.shift();
+      }
+      this.t -= step;
+    }
   }
 }
 
@@ -628,8 +1295,63 @@ function statsFor(g, S) {
     case 'sprint':  return [['TIME', t], ['LINES', `${Math.min(g.lines, 40)}/40`], ['PPS', pps(g)], ['PIECES', g.stats.pieces]];
     case 'classic': return [['SCORE', sc], ['LEVEL', g.level], ['LINES', g.lines], ['TIME', t]];
     case 'dig':     return [['TIME', t], ['GARBAGE', garbageLeft(g)], ['PIECES', g.stats.pieces], ['PPS', pps(g)]];
+    case 'versus':  return [['VS', ui.vs ? ui.vs.rank.name.toUpperCase() : '—', ui.vs ? ui.vs.rank.color : null], ['SENT', g.sent], ['LINES', g.lines], ['PPS', pps(g)]];
     default:        return [['LINES', g.lines], ['SCORE', sc], ['TIME', t], ['PPS', pps(g)]];
   }
+}
+
+const VS_CELL = 15, VS_X = CW + 26, VS_W = CW + 26 + COLS * VS_CELL + 4;
+
+function drawMeter(ctx, S, x, n, cell) {
+  if (n <= 0) return;
+  const h = Math.min(n, VIS) * cell;
+  ctx.save();
+  ctx.fillStyle = n >= 8 ? S.warn : shade(S.colors.L, 0);
+  if (S.glow) { ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 8; }
+  ctx.fillRect(x, VIS * cell - h + (cell === CELL ? 0 : 30), 5, h);
+  ctx.restore();
+}
+
+function renderVersusSide(ctx, vs) {
+  const S = sk(), ai = vs.ai, c = VS_CELL, top = 30, W = COLS * c, H = VIS * c;
+  const retro = !!S.pixel;
+  ctx.clearRect(CW, 0, VS_W - CW, CH);
+  // incoming garbage meter for the player (left of the player's board)
+  drawMeter(ctx, S, BX - 8, vs.player.pending(), CELL);
+  // AI header
+  ctx.save();
+  ctx.textAlign = 'left';
+  ctx.fillStyle = vs.rank.color; ctx.font = `${retro ? 400 : 700} ${retro ? 9 : 13}px ${S.fontD}`;
+  ctx.fillText(`${vs.rank.name.toUpperCase()} AI`, VS_X, 16);
+  ctx.restore();
+  // AI board
+  if (S.boardFill) S.boardFill(ctx, VS_X, top, W, H); else { ctx.fillStyle = S.board; ctx.fillRect(VS_X, top, W, H); }
+  for (let y = HIDDEN; y < ROWS; y++)
+    for (let x = 0; x < COLS; x++) {
+      const v = ai.board[y][x];
+      if (v) drawCell(ctx, S, VS_X + x * c, top + (y - HIDDEN) * c, v, c, ai.over ? 0.45 : 0.95);
+    }
+  const p = ai.piece;
+  if (p && !ai.over) for (const [cx, cy] of ROT[p.t][p.r]) {
+    const y = p.y + cy - HIDDEN;
+    if (y >= 0) drawCell(ctx, S, VS_X + (p.x + cx) * c, top + y * c, p.t, c, 1);
+  }
+  ctx.save();
+  ctx.strokeStyle = vs.rank.color; ctx.lineWidth = 2;
+  ctx.strokeRect(VS_X - 1, top - 1, W + 2, H + 2);
+  ctx.restore();
+  drawMeter(ctx, S, VS_X - 8, ai.pending(), c);
+  // AI stats
+  ctx.save();
+  ctx.textAlign = 'left';
+  ctx.font = `600 ${retro ? 9 : 11}px ${S.fontB}`; ctx.fillStyle = S.muted;
+  ctx.fillText(`SENT ${ai.sent}   ·   ${vs.rank.pps.toFixed(2)} PPS`, VS_X, top + H + 20);
+  if (ai.ko) {
+    ctx.fillStyle = S.overlay; ctx.fillRect(VS_X, top, W, H);
+    ctx.textAlign = 'center'; ctx.fillStyle = S.label; ctx.font = `700 ${retro ? 16 : 26}px ${S.fontD}`;
+    ctx.fillText('K.O.', VS_X + W / 2, top + H / 2 + 8);
+  }
+  ctx.restore();
 }
 
 function render(ctx, g) {
@@ -772,6 +1494,7 @@ function drawModeIcon(canvas, mode) {
     classic: ['T', [[0,0],[1,0],[2,0],[1,1]]],
     dig:     ['G', [[0,0],[2,0],[3,0],[0,1],[1,1],[3,1]]],
     zen:     ['O', [[0,0],[1,0],[0,1],[1,1]]],
+    versus:  ['Z', [[0,0],[1,0],[1,1],[2,1]]],
   };
   const [t, cells] = shapes[mode];
   const mx = Math.max(...cells.map(c => c[0])) + 1, my = Math.max(...cells.map(c => c[1])) + 1;
@@ -931,6 +1654,8 @@ html[data-rt-skin=retro] .rt-res .big{font-size:24px;font-weight:400}
 .rt-stats b{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
 .rt-unl{text-align:left;margin-top:6px}
 .rt-unl div{padding:5px 0;border-bottom:1px solid var(--rt-line2);display:flex;gap:8px;align-items:center}
+.rt-unl i{width:24px;height:24px;flex:0 0 24px;display:grid;place-items:center;color:var(--rt-gold);border:1px solid var(--rt-goldd);border-radius:var(--rt-radius)}
+.rt-unl i svg{width:15px;height:15px}
 .rt-unl b{font-weight:600}.rt-unl span{color:var(--rt-muted)}
 
 .rt-prog{display:flex;align-items:center;gap:10px;margin-bottom:14px}
@@ -938,13 +1663,18 @@ html[data-rt-skin=retro] .rt-res .big{font-size:24px;font-weight:400}
 .rt-prog .bar i{display:block;height:100%;background:var(--rt-gold)}
 .rt-prog b{font-variant-numeric:tabular-nums}
 .rt-ach{display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--rt-line2)}
-.rt-ach .ic{width:26px;height:26px;flex:0 0 26px;display:flex;align-items:center;justify-content:center;border:1px solid var(--rt-line);color:var(--rt-dim)}
-.rt-ach .ic svg{width:12px;height:12px}
+.rt-ach .ic{width:36px;height:36px;flex:0 0 36px;display:flex;align-items:center;justify-content:center;border:1px solid var(--rt-line);border-radius:var(--rt-radius);color:var(--rt-dim);background:var(--rt-bg2);position:relative}
+.rt-ach .ic svg{width:20px;height:20px;opacity:.35}
+.rt-ach .ic .lk{position:absolute;right:-4px;bottom:-4px;width:14px;height:14px;display:grid;place-items:center;background:var(--rt-bg2);border:1px solid var(--rt-line);border-radius:50%}
+.rt-ach .ic .lk svg{width:8px;height:8px;opacity:1}
+.rt-ach.on{cursor:pointer}
+.rt-ach.on:hover .ic{box-shadow:0 0 10px var(--rt-goldd)}
 .rt-ach .t{flex:1}
 .rt-ach .n{font-weight:600;color:var(--rt-muted)}
 .rt-ach .d{font-size:11px;color:var(--rt-dim);margin-top:1px}
 .rt-ach .dt{font-size:10px;color:var(--rt-dim);white-space:nowrap}
-.rt-ach.on .ic{border-color:var(--rt-gold);color:var(--rt-gold);background:var(--rt-card)}
+.rt-ach.on .ic{border-color:var(--rt-gold);color:var(--rt-gold);background:radial-gradient(circle at 50% 30%,var(--rt-card),var(--rt-bg2))}
+.rt-ach.on .ic svg{opacity:1;filter:drop-shadow(0 0 4px var(--rt-goldd))}
 .rt-ach.on .n{color:var(--rt-text)}.rt-ach.on .d{color:var(--rt-muted)}
 .rt-tbl{width:100%;border-collapse:collapse}
 .rt-tbl td{padding:5px 0;border-bottom:1px solid var(--rt-line2)}
@@ -997,6 +1727,26 @@ html[data-rt-skin=retro] .rt-res .big{font-size:24px;font-weight:400}
 .rt-link.gh:hover svg{color:var(--rt-text)}
 .rt-link.dc:hover svg{color:#5865f2}
 html[data-rt-skin=retro] .rt-link.dc:hover svg{color:inherit}
+#rt-achpop{position:fixed;right:16px;bottom:16px;z-index:2147483647;display:flex;flex-direction:column-reverse;gap:8px;pointer-events:none}
+.rt-ap{width:310px;height:80px;box-sizing:border-box;display:flex;align-items:center;gap:12px;padding:0 14px 0 11px;
+  background:linear-gradient(135deg,var(--rt-bg1),var(--rt-bg2));border:1px solid var(--rt-goldd);border-radius:var(--rt-radius);
+  box-shadow:0 10px 28px rgba(0,0,0,.6);font-family:var(--rt-fb);color:var(--rt-text);
+  transform:translateY(calc(100% + 24px));opacity:0;transition:transform .5s cubic-bezier(.2,.9,.25,1.15),opacity .25s}
+.rt-ap.in{transform:none;opacity:1}
+.rt-ap.out{transform:translateY(calc(100% + 24px));opacity:0;transition:transform .45s ease-in,opacity .45s ease-in}
+.rt-ap .ico{position:relative;width:58px;height:58px;flex:0 0 58px;display:grid;place-items:center;overflow:hidden;
+  color:var(--rt-gold);border:1px solid var(--rt-gold);border-radius:var(--rt-radius);background:radial-gradient(circle at 50% 30%,var(--rt-card),var(--rt-bg2))}
+.rt-ap .ico svg{width:34px;height:34px;filter:drop-shadow(0 0 6px var(--rt-goldd));animation:rtPop .6s .15s cubic-bezier(.2,1.6,.4,1) both}
+.rt-ap .ico::after{content:'';position:absolute;inset:-40%;background:linear-gradient(115deg,transparent 42%,rgba(255,255,255,.4) 50%,transparent 58%);transform:translateX(-120%);animation:rtShine 1.1s .45s ease-out forwards}
+.rt-ap .tx{min-width:0}
+.rt-ap .k{font-size:11px;color:var(--rt-muted)}
+.rt-ap .n{font-family:var(--rt-fd);font-weight:700;font-size:15px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-ap .d{font-size:11px;color:var(--rt-dim);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+html[data-rt-skin=retro] .rt-ap{border-width:2px;box-shadow:4px 4px 0 #0f380f}
+html[data-rt-skin=retro] .rt-ap .n{font-size:10px;font-weight:400}
+html[data-rt-skin=neon] .rt-ap{box-shadow:0 0 20px rgba(255,46,200,.35)}
+@keyframes rtShine{to{transform:translateX(120%)}}
+@keyframes rtPop{from{transform:scale(.3);opacity:0}to{transform:none;opacity:1}}
 #rt-toasts{position:fixed;top:70px;right:24px;z-index:2147483647;display:flex;flex-direction:column;gap:6px;pointer-events:none}
 .rt-toast{width:250px;background:var(--rt-bg2);border:1px solid var(--rt-goldd);border-left:2px solid var(--rt-gold);border-radius:var(--rt-radius);padding:8px 10px;font-family:var(--rt-fb);color:var(--rt-text);font-size:12px;
   animation:rtIn .3s ease-out;transition:opacity .4s,transform .4s;box-shadow:0 6px 18px rgba(0,0,0,.45)}
@@ -1052,7 +1802,7 @@ function cycleSkin() {
 function el(html) { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; }
 
 function mount() {
-  for (const id of ['rt-root', 'rt-fab', 'rt-toasts', 'rt-style']) document.getElementById(id)?.remove();
+  for (const id of ['rt-root', 'rt-fab', 'rt-toasts', 'rt-achpop', 'rt-style']) document.getElementById(id)?.remove();
   if (!document.getElementById('rt-font')) {
     const f = document.createElement('link');
     f.id = 'rt-font'; f.rel = 'stylesheet';
@@ -1095,9 +1845,12 @@ function mount() {
   ui.turn = ui.root.querySelector('.rt-turn');
   ui.root.addEventListener('click', e => safe(onClick)(e));
   ui.body.addEventListener('input', e => safe(onSettingInput)(e));
+  ui.body.addEventListener('change', e => safe(onSettingChange)(e));
 
   ui.toasts = el('<div id="rt-toasts"></div>');
   document.body.appendChild(ui.toasts);
+  ui.achpop = el('<div id="rt-achpop"></div>');
+  document.body.appendChild(ui.achpop);
 
   ui.fab = el(`<div id="rt-fab" title="RiftTris (Alt+T / F8)">${T_CELLS.map(([x, y]) => `<i style="left:${x * 14}px;top:${y * 14}px"></i>`).join('')}<span class="lb rt-hidden">90s</span></div>`);
   document.body.appendChild(ui.fab);
@@ -1150,6 +1903,7 @@ function show() {
   if (!ui.root || !document.documentElement.contains(ui.root)) mount();
   ui.open = true;
   ui.root.classList.remove('rt-hidden');
+  if (save.settings.music) Music.load();
   applyGeom();
   setFocused(true);
   document.activeElement?.blur?.();
@@ -1165,6 +1919,7 @@ function hide() {
   pauseGame();
   storeResume(); persist();
   ui.open = false;
+  Music.pause();
   ui.root.classList.add('rt-hidden');
   cancelAnimationFrame(ui.raf);
   updateFab();
@@ -1254,12 +2009,14 @@ function resetInput() { Object.assign(ui.input, { left: false, right: false, dow
 function pauseGame() {
   const g = ui.game;
   if (!g || g.over) return;
+  if (!g.paused && ui.open) Sfx.play('pause');
   g.paused = true; resetInput();
   ui.pauseEl?.classList.remove('rt-hidden');
 }
 function resumeGame() {
   const g = ui.game;
   if (!g || g.over) return;
+  if (g.paused) Sfx.play('resume');
   g.paused = false; resetInput();
   ui.pauseEl?.classList.add('rt-hidden');
   hideTurn();
@@ -1275,11 +2032,23 @@ function clearResume() { save.resume = null; }
 /* =====================================================================
    SCREENS
    ===================================================================== */
+function currentRank() {
+  let best = null;
+  for (const r of RANKS) if (save.versus.beaten[r.id]) best = r;
+  return best;
+}
+function nextRankIdx() {
+  const cur = currentRank();
+  return cur ? Math.min(RANKS.length - 1, RANKS.indexOf(cur) + 1) : 0;
+}
+
 function bestText(mode) {
+  if (mode === 'versus') { const r = currentRank(); return r ? r.name : 'Unranked'; }
   const b = save.best[mode];
   if (!b) return '—';
   if (mode === 'sprint' || mode === 'dig') return b.time ? fmt(b.time) : '—';
   if (mode === 'zen') return b.lines ? `${b.lines} lines` : '—';
+  if (mode === 'versus') { const r = currentRank(); return r ? r.name : 'Unranked'; }
   return b.score ? num(b.score) : '—';
 }
 
@@ -1302,6 +2071,7 @@ function rerender() {
   if (ui.tab === 'settings') return renderSettings();
   if (ui.game && !ui.game.over && ui.screen !== 'menu') return renderGame();
   if (ui.screen === 'results' && ui.game) return renderResults(ui.game, ui.lastNew);
+  if (ui.screen === 'ladder') return renderLadder();
   return renderMenu();
 }
 
@@ -1359,6 +2129,7 @@ function renderMenu() {
   ui.screen = 'menu'; ui.lastScreen = 'menu';
   if (ui.game && !ui.game.over) storeResume();
   ui.game = null; ui.canvas = null; ui.ctx = null;
+  Music.stop();
   ui.ro?.disconnect(); ui.ro = null;
   const inChamp = champ.phase === 'ChampSelect';
   const r = save.resume;
@@ -1379,7 +2150,7 @@ function renderMenu() {
             <div class="n">${m.name}<small>${m.tag}</small>${id === 'rapid' && inChamp ? '<span class="rt-tagnow">Champ select</span>' : ''}</div>
             <div class="d">${m.desc}</div>
           </div>
-          <div class="b"><span>Best</span><b>${bestText(id)}</b></div>
+          <div class="b"><span>${id === 'versus' ? 'Rank' : 'Best'}</span><b>${bestText(id)}</b></div>
         </div>`;
       }).join('')}
     </div>
@@ -1395,12 +2166,13 @@ function fitCanvas() {
   if (!ui.canvas || !ui.ctx) return;
   const r = ui.canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
-  const k = Math.max(1, Math.min(r.width / CW, r.height / CH)) * dpr;
-  const w = Math.round(CW * k), h = Math.round(CH * k);
+  const cw = ui.cw || CW;
+  const k = Math.max(1, Math.min(r.width / cw, r.height / CH)) * dpr;
+  const w = Math.round(cw * k), h = Math.round(CH * k);
   if (ui.canvas.width !== w || ui.canvas.height !== h) {
     ui.canvas.width = w; ui.canvas.height = h;
     ui.ctx.setTransform(k, 0, 0, k, 0, 0);
-    if (ui.game) render(ui.ctx, ui.game);
+    if (ui.game) drawFrame();
   }
 }
 
@@ -1409,7 +2181,7 @@ function renderGame() {
   ui.screen = 'game';
   const g = ui.game, m = MODES[g.mode];
   ui.body.innerHTML = `
-    <div class="rt-hud"><b>${m.name}</b><span>Esc pause · R restart · V skin</span></div>
+    <div class="rt-hud"><b>${m.name}</b><span>Esc pause · R restart · V skin · M mute</span></div>
     <div class="rt-stage">
       <canvas></canvas>
       <div class="rt-pause ${g.paused ? '' : 'rt-hidden'}">
@@ -1423,18 +2195,27 @@ function renderGame() {
   ui.canvas = ui.body.querySelector('canvas');
   ui.ctx = ui.canvas.getContext('2d');
   ui.pauseEl = ui.body.querySelector('.rt-pause');
-  ui.canvas.width = CW; ui.canvas.height = CH;
+  ui.cw = g.mode === 'versus' ? VS_W : CW;
+  ui.canvas.width = ui.cw; ui.canvas.height = CH;
   ui.ro?.disconnect();
   ui.ro = new ResizeObserver(() => fitCanvas());
   ui.ro.observe(ui.body.querySelector('.rt-stage'));
   requestAnimationFrame(fitCanvas);
-  render(ui.ctx, g);
+  drawFrame();
+}
+
+function drawFrame() {
+  const g = ui.game;
+  if (!g || !ui.ctx) return;
+  if (g.mode === 'versus' && ui.vs) { ui.ctx.clearRect(0, 0, VS_W, CH); render(ui.ctx, g); renderVersusSide(ui.ctx, ui.vs); }
+  else render(ui.ctx, g);
 }
 
 function renderResults(g, isNew) {
   setTab('play');
   ui.screen = 'results'; ui.lastScreen = 'results';
   ui.canvas = null; ui.ctx = null; ui.ro?.disconnect(); ui.ro = null;
+  if (g.mode === 'versus' && ui.vs) return renderVersusResults(g);
   const titles = {
     rapid: g.won ? "Time's up" : 'Topped out', sprint: g.won ? '40 lines' : 'Topped out', classic: 'Game over',
     dig: g.won ? 'Dug out' : 'Topped out', zen: 'Session over',
@@ -1455,14 +2236,41 @@ function renderResults(g, isNew) {
       <div class="k">${MODES[g.mode].name} · ${titles[g.mode]}</div>
       <div class="big">${big}</div>
       ${isNew ? '<div class="pb">New personal best</div>' : `<div class="pb o">Best: ${bestText(g.mode)}</div>`}
-      <div class="rt-stats">${cells.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div>
+      <div class="rt-stats" style="grid-template-columns:repeat(4,1fr)">${cells.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div>
       ${ui.sessionAch.length ? `<div class="rt-sec" style="text-align:left">Unlocked</div><div class="rt-unl">${ui.sessionAch.map(id => {
         const a = ACH.find(x => x.id === id);
-        return `<div><b>${a.name}</b><span>${a.desc}</span></div>`;
+        return `<div><i>${achIcon(a.id)}</i><b>${a.name}</b><span>${a.desc}</span></div>`;
       }).join('')}</div>` : ''}
       <div class="rt-actions">
         <button class="rt-btn ghost" data-act="menu">Modes</button>
         <button class="rt-btn pri" data-act="again">Play again</button>
+      </div>
+    </div>`;
+}
+
+function renderVersusResults(g) {
+  const vs = ui.vs, r = vs.rank, promoted = ui.vsPromoted;
+  const cells = [
+    ['Sent', g.sent], ['Received', g.received], ['Lines', g.lines], ['PPS', pps(g)],
+    ['Tetrises', g.stats.tetrises], ['T-Spins', g.stats.tspins], ['Max combo', Math.max(0, g.stats.maxCombo)], ['Time', fmt(g.elapsed)],
+  ];
+  const hasNext = vs.idx < RANKS.length - 1;
+  ui.body.innerHTML = `
+    <div class="rt-res">
+      <div class="k">Versus ${r.name} AI</div>
+      <div class="big" style="color:${g.won ? 'var(--rt-gold)' : 'var(--rt-red)'}">${g.won ? 'Victory' : 'Defeat'}</div>
+      ${promoted ? `<div style="display:flex;align-items:center;justify-content:center;gap:10px;margin:6px 0 2px">${rankEmblem(r, 40)}
+        <div style="text-align:left"><div class="pb">Rank up!</div><div style="font-size:13px">You're now <b style="color:${r.color}">${r.name}</b></div></div></div>`
+        : `<div class="pb o">Your rank: ${bestText('versus')}</div>`}
+      <div class="rt-stats" style="grid-template-columns:repeat(4,1fr)">${cells.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div>
+      ${ui.sessionAch.length ? `<div class="rt-sec" style="text-align:left">Unlocked</div><div class="rt-unl">${ui.sessionAch.map(id => {
+        const a = ACH.find(x => x.id === id);
+        return `<div><i>${achIcon(a.id)}</i><b>${a.name}</b><span>${a.desc}</span></div>`;
+      }).join('')}</div>` : ''}
+      <div class="rt-actions">
+        <button class="rt-btn ghost" data-act="ladder">Ranks</button>
+        <button class="rt-btn" data-act="again">Rematch</button>
+        ${g.won && hasNext ? `<button class="rt-btn pri" data-act="nextrank">Fight ${RANKS[vs.idx + 1].name}</button>` : ''}
       </div>
     </div>`;
 }
@@ -1474,7 +2282,7 @@ function renderAch() {
   const t = save.totals;
   const hrs = t.playMs / 3600000;
   const date = ts => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const histMain = h => (h.mode === 'sprint' || h.mode === 'dig') && h.won ? fmt(h.elapsed) : h.mode === 'zen' ? `${h.lines} lines` : `${num(h.score)} pts`;
+  const histMain = h => h.mode === 'versus' ? `${h.won ? 'Won' : 'Lost'} vs ${h.rank || 'AI'}` : (h.mode === 'sprint' || h.mode === 'dig') && h.won ? fmt(h.elapsed) : h.mode === 'zen' ? `${h.lines} lines` : `${num(h.score)} pts`;
   const sorted = [...ACH].sort((a, b) => (save.ach[b.id] ? 1 : 0) - (save.ach[a.id] ? 1 : 0));
   ui.body.innerHTML = `
     <div class="rt-stats" style="margin-top:0">
@@ -1491,7 +2299,7 @@ function renderAch() {
     <div class="rt-prog"><div class="bar"><i style="width:${(n / ACH.length) * 100}%"></i></div><b>${n} / ${ACH.length}</b></div>
     ${sorted.map(a => {
       const on = !!save.ach[a.id];
-      return `<div class="rt-ach ${on ? 'on' : ''}"><div class="ic">${on ? ICON_CHECK : ICON_LOCK}</div>
+      return `<div class="rt-ach ${on ? 'on' : ''}" ${on ? `data-act="achprev:${a.id}" title="Click to show the popup again"` : ''}><div class="ic">${achIcon(a.id)}${on ? '' : `<span class="lk">${ICON_LOCK}</span>`}</div>
         <div class="t"><div class="n">${a.name}</div><div class="d">${a.desc}</div></div>
         ${on ? `<div class="dt">${date(save.ach[a.id])}</div>` : ''}</div>`;
     }).join('')}`;
@@ -1501,15 +2309,15 @@ function renderSettings() {
   setTab('settings');
   ui.screen = 'settings'; ui.resetArmed = false;
   const s = save.settings;
-  const range = (key, label, hint, min, max) => `
+  const range = (key, label, hint, min, max, unit = 'ms') => `
     <div class="rt-row"><div class="l">${label}<small>${hint}</small></div>
-      <div><input type="range" data-set="${key}" min="${min}" max="${max}" step="1" value="${s[key]}"><span class="v" data-val="${key}">${s[key]} ms</span></div></div>`;
+      <div><input type="range" data-set="${key}" data-unit="${unit}" min="${min}" max="${max}" step="1" value="${s[key]}"><span class="v" data-val="${key}">${s[key]}${unit === '%' ? '%' : ' ' + unit}</span></div></div>`;
   const check = (key, label, hint) => `
     <label class="rt-row"><div class="l">${label}<small>${hint}</small></div><input class="rt-chk" type="checkbox" data-set="${key}" ${s[key] ? 'checked' : ''}></label>`;
   const keys = [
     ['Move', '← →'], ['Soft drop', '↓'], ['Hard drop', 'Space'], ['Rotate right', '↑ / X'],
     ['Rotate left', 'Z / Ctrl'], ['Rotate 180°', 'A'], ['Hold', 'C / Shift'], ['Pause', 'Esc / P'],
-    ['Restart', 'R'], ['Change skin', 'V'], ['Open / close', 'Alt+T / F8'], ['Quick start', '1 – 5'],
+    ['Restart', 'R'], ['Change skin', 'V'], ['Mute all', 'M'], ['Open / close', 'Alt+T / F8'], ['Quick start', '1 – 5'],
   ];
   ui.body.innerHTML = `
     <div class="rt-sec">Skin</div>
@@ -1523,6 +2331,14 @@ function renderSettings() {
     ${range('arr', 'ARR', 'Slide speed while held (0 = instant)', 0, 100)}
     ${range('sdf', 'Soft drop', 'Drop interval while holding ↓ (0 = instant)', 0, 100)}
     ${check('ghost', 'Ghost piece', 'Shows where the piece will land')}
+
+    <div class="rt-sec rt-gap">Sound</div>
+    ${check('sfx', 'Sound effects', 'Each skin has its own sound')}
+    ${range('sfxVol', 'Effects volume', 'Moves, clears, alerts', 0, 100, '%')}
+    ${check('music', 'Music', Music.missing ? 'Built-in chiptune. Drop a music.mp3 in the plugin folder to use your own.' : 'Playing music.mp3 from the plugin folder')}
+    ${range('musicVol', 'Music volume', 'Speeds up as the level rises', 0, 100, '%')}
+    ${check('muted', 'Mute everything', 'Shortcut: M')}
+    <div class="rt-actions" style="margin-top:8px"><button class="rt-btn sm ghost" data-act="sfxtest">Test sound</button></div>
 
     <div class="rt-sec rt-gap">Champ select</div>
     ${check('champPill', 'Quick Rapid', 'Clicking the Tetris icon during champ select starts Rapid')}
@@ -1556,18 +2372,34 @@ function onSettingInput(e) {
   else {
     save.settings[key] = Number(e.target.value);
     const v = ui.body.querySelector(`[data-val="${key}"]`);
-    if (v) v.textContent = `${e.target.value} ms`;
+    const unit = e.target.dataset.unit || 'ms';
+    if (v) v.textContent = unit === '%' ? `${e.target.value}%` : `${e.target.value} ${unit}`;
   }
-  persist(); updateFab();
+  persist(); updateFab(); Music.refresh();
+  if (key === 'sfx' && e.target.checked) Sfx.play('test');
+}
+
+function onSettingChange(e) {
+  if (e.target.dataset?.set === 'sfxVol') Sfx.play('test');
 }
 
 function onClick(e) {
   const b = e.target.closest('[data-act]');
   if (!b) return;
   const act = b.dataset.act;
+  if (act !== 'resume' && act !== 'sfxtest') Sfx.play('ui');
   if (act.startsWith('tab:')) return goTab(act.slice(4));
   if (act.startsWith('skin:')) return setSkin(act.slice(5));
   if (act.startsWith('link:')) return openLink(act.slice(5));
+  if (act.startsWith('achprev:')) return achPopup(act.slice(8));
+  if (act.startsWith('rank:')) {
+    const i = +act.slice(5);
+    if (e.detail >= 2) return startVersus(i);
+    ui.ladderSel = i;
+    ui.body.querySelectorAll('.rt-mode').forEach(r => r.classList.toggle('on', r.dataset.act === act));
+    const f = ui.body.querySelector('[data-act="fight"]'); if (f) f.textContent = `Fight ${RANKS[i].name}`;
+    return;
+  }
   if (act.startsWith('sel:')) {
     const id = act.slice(4);
     if (e.detail >= 2 || ui.sel === id && e.detail === 0) return startGame(id);
@@ -1578,10 +2410,15 @@ function onClick(e) {
   switch (act) {
     case 'hide': return hide();
     case 'play': return startGame(ui.sel);
+    case 'sfxtest': return Sfx.play('test');
     case 'menu': return renderMenu();
     case 'resume': return resumeGame();
-    case 'restart': return startGame(ui.game.mode);
-    case 'again': return startGame(ui.lastMode);
+    case 'restart': return ui.game.mode === 'versus' ? startVersus(ui.vs.idx) : startGame(ui.game.mode);
+    case 'fight': return startVersus(ui.ladderSel ?? nextRankIdx());
+    case 'climb': return startVersus(nextRankIdx());
+    case 'ladder': return renderLadder();
+    case 'nextrank': return startVersus((ui.vs?.idx ?? 0) + 1);
+    case 'again': return ui.lastMode === 'versus' && ui.vs ? startVersus(ui.vs.idx) : startGame(ui.lastMode);
     case 'endzen': ui.game.paused = false; return ui.game.finish(true);
     case 'goclient': hideTurn(); return hide();
     case 'dismissturn': hideTurn(); return;
@@ -1615,16 +2452,75 @@ function onClick(e) {
 /* =====================================================================
    GAME FLOW
    ===================================================================== */
-const HOOKS = () => ({ onClear, onFinish });
+const HOOKS = () => ({ onClear, onFinish, sfx: (n, d) => Sfx.play(n, d) });
+
+function renderLadder() {
+  setTab('play');
+  ui.screen = 'ladder';
+  if (ui.ladderSel == null) ui.ladderSel = nextRankIdx();
+  const cur = currentRank(), nxt = nextRankIdx();
+  ui.body.innerHTML = `
+    <div class="rt-sec">Versus AI · Ranked</div>
+    <div class="rt-note" style="margin-bottom:10px">Clear lines to send garbage, and the first one to top out loses. Beat a rank to earn its achievement, then climb to the next one.
+      Your rank: <b style="color:${cur ? cur.color : 'var(--rt-text)'}">${cur ? cur.name : 'Unranked'}</b></div>
+    <div class="rt-list">
+      ${RANKS.map((r, i) => {
+        const rec = save.versus.rec[r.id] || { w: 0, l: 0 };
+        const beaten = !!save.versus.beaten[r.id];
+        return `<div class="rt-mode ${ui.ladderSel === i ? 'on' : ''}" data-act="rank:${i}">
+          <span style="flex:0 0 40px;display:grid;place-items:center">${rankEmblem(r, 34)}</span>
+          <div class="t">
+            <div class="n" style="color:${r.color}">${r.name}${i === nxt && !beaten ? '<span class="rt-tagnow">Next</span>' : ''}${beaten ? '<span class="rt-tagnow" style="color:var(--rt-gold);border-color:var(--rt-gold)">Beaten</span>' : ''}</div>
+            <div class="d">${r.pps.toFixed(2)} pieces/s · ${rankDesc(r)}${r.hold ? ' · uses hold' : ''}</div>
+          </div>
+          <div class="b"><span>Record</span><b>${rec.w}W ${rec.l}L</b></div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="rt-actions">
+      <button class="rt-btn ghost" data-act="menu">Modes</button>
+      <span class="rt-sp"></span>
+      <button class="rt-btn" data-act="climb" title="Fight the next rank you haven't beaten">Climb</button>
+      <button class="rt-btn pri" data-act="fight">Fight ${RANKS[ui.ladderSel].name}</button>
+    </div>`;
+}
+
+function startVersus(idx) {
+  idx = Math.max(0, Math.min(RANKS.length - 1, idx));
+  const rank = RANKS[idx];
+  ui.sessionAch = []; ui.lastMode = 'versus'; ui.sel = 'versus'; ui.ladderSel = idx; ui.autosave = 0;
+  resetInput(); hideTurn(); setFocused(true);
+  const player = new Game('versus', HOOKS());
+  player.sdf = save.settings.sdf;
+  const ai = new Game('versus', {
+    onAttack: (_, n) => { player.receive(n); if (n >= 4) Sfx.play('warn'); },
+    onFinish: () => {
+      ai.ko = true;
+      if (player.over) return;
+      Sfx.play('ko');
+      player.won = true;
+      player.finish(true);
+    },
+  });
+  player.hooks.onAttack = (_, n) => ai.receive(n);
+  ui.vs = { rank, idx, player, ai, bot: new Bot(ai, rank) };
+  ui.game = player;
+  Music.stop(); Music.setRate(1);
+  persist();
+  renderGame();
+}
 
 function startGame(mode) {
   if (!MODES[mode]) return;
+  if (mode === 'versus') { if (ui.game && !ui.game.over) storeResume(); ui.sel = 'versus'; ui.ladderSel = null; return renderLadder(); }
+  ui.vs = null;
   if (ui.game && !ui.game.over) storeResume();
   if (save.resume && save.resume.mode === mode) clearResume();
   ui.sessionAch = []; ui.lastMode = mode; ui.sel = mode; ui.autosave = 0;
   resetInput(); hideTurn(); setFocused(true);
   ui.game = new Game(mode, HOOKS());
   ui.game.sdf = save.settings.sdf;
+  Music.stop(); Music.setRate(1);
   persist();
   renderGame();
 }
@@ -1634,8 +2530,10 @@ function continueSaved() {
   if (!r || !MODES[r.mode]) return renderMenu();
   ui.sessionAch = []; ui.lastMode = r.mode; ui.sel = r.mode; ui.autosave = 0;
   resetInput(); hideTurn(); setFocused(true);
+  ui.vs = null;
   ui.game = Game.restore(r, HOOKS());
   ui.game.sdf = save.settings.sdf;
+  Music.stop();
   clearResume(); persist();
   renderGame();
 }
@@ -1648,13 +2546,30 @@ function toast(kind, name, desc, ms = 3200) {
   setTimeout(() => t.remove(), ms + 500);
 }
 
+let achQueueAt = 0;
+function achPopup(id, silent = false) {
+  const a = ACH.find(x => x.id === id);
+  if (!a || !ui.achpop) return;
+  // several unlocks at once come in one after another, like Steam
+  const now = Date.now(), at = Math.max(now, achQueueAt);
+  achQueueAt = at + 700;
+  setTimeout(() => {
+    const p = el(`<div class="rt-ap"><div class="ico">${achIcon(id)}</div>
+      <div class="tx"><div class="k">Achievement unlocked</div><div class="n">${a.name}</div><div class="d">${a.desc}</div></div></div>`);
+    ui.achpop.appendChild(p);
+    requestAnimationFrame(() => requestAnimationFrame(() => p.classList.add('in')));
+    if (!silent) Sfx.play('ach');
+    setTimeout(() => { p.classList.remove('in'); p.classList.add('out'); }, 5000);
+    setTimeout(() => p.remove(), 5600);
+  }, at - now);
+}
+
 function unlock(id) {
   if (save.ach[id]) return;
   save.ach[id] = Date.now();
   ui.sessionAch.push(id);
   persist();
-  const a = ACH.find(x => x.id === id);
-  toast('Achievement unlocked', a.name, a.desc);
+  achPopup(id);
 }
 
 function onClear(g, { n, tspin, mini, pc }) {
@@ -1674,13 +2589,14 @@ function onClear(g, { n, tspin, mini, pc }) {
 }
 
 function onFinish(g) {
+  Music.stop();
   if (save.resume && save.resume.mode === g.mode) clearResume();
   const t = save.totals;
   t.games++; t.lines += g.lines; t.tetrises += g.stats.tetrises; t.tspins += g.stats.tspins;
   t.playMs += g.elapsed; t.pieces += g.stats.pieces;
   save.played[g.mode] = (save.played[g.mode] || 0) + 1;
   save.skinsUsed[save.settings.skin] = true;
-  save.history.unshift({ mode: g.mode, score: g.score, lines: g.lines, elapsed: g.elapsed, won: g.won, at: Date.now() });
+  save.history.unshift({ mode: g.mode, score: g.score, lines: g.lines, elapsed: g.elapsed, won: g.won, at: Date.now(), rank: g.mode === 'versus' && ui.vs ? ui.vs.rank.name : undefined });
   save.history = save.history.slice(0, 20);
 
   const b = save.best[g.mode] || {};
@@ -1703,6 +2619,23 @@ function onFinish(g) {
     if (champ.phase === 'ChampSelect' && g.won) unlock('champ');
   }
   if (g.mode === 'dig' && g.won) { unlock('dig'); if (g.elapsed < 45000) unlock('dig45'); }
+  ui.vsPromoted = false;
+  if (g.mode === 'versus' && ui.vs) {
+    const r = ui.vs.rank;
+    ui.vs.ai.over = true;
+    const rec = save.versus.rec[r.id] || { w: 0, l: 0 };
+    if (g.won) rec.w++; else rec.l++;
+    save.versus.rec[r.id] = rec;
+    if (g.won) {
+      const before = currentRank();
+      if (!save.versus.beaten[r.id]) save.versus.beaten[r.id] = Date.now();
+      const after = currentRank();
+      ui.vsPromoted = !!after && after !== before && after.id === r.id;
+      unlock('vs_' + r.id);
+      if (g.received === 0 && ui.vs.idx >= 3) unlock('vs_flawless');
+      isNew = ui.vsPromoted;
+    }
+  }
   if (t.lines >= 1000) unlock('lines1k');
   if (t.games >= 25) unlock('games25');
   if (MODE_ORDER.every(m => save.played[m] > 0)) unlock('all_modes');
@@ -1717,6 +2650,14 @@ function onFinish(g) {
 /* =====================================================================
    LOOP
    ===================================================================== */
+function syncMusic(g) {
+  const want = ui.open && ui.focused && ui.screen === 'game' && g && !g.over && !g.paused && g.countdown <= 0 && Music.vol() > 0;
+  if (want) {
+    Music.setRate(1 + (Math.min(g.level, 10) - 1) * 0.03);
+    if (!Music.playing) Music.start();
+  } else if (Music.playing) Music.pause();
+}
+
 function das(dt) {
   const inp = ui.input, g = ui.game;
   if (!inp.dir) return;
@@ -1744,12 +2685,18 @@ function loop(ts) {
     ui.last = ts;
     updateBadge();
     const g = ui.game;
+    syncMusic(g);
     if (!g || !ui.ctx || ui.screen !== 'game') return;
     if (!g.paused && !g.over && g.countdown <= 0) das(dt);
     g.soft = ui.input.down && !g.paused;
     g.sdf = save.settings.sdf;
     g.update(dt);
-    render(ui.ctx, g);
+    if (g.mode === 'versus' && ui.vs && !g.paused && !g.over) {
+      ui.vs.ai.paused = false;
+      ui.vs.ai.update(dt);
+      ui.vs.bot.update(dt);
+    } else if (ui.vs) ui.vs.ai.paused = true;
+    drawFrame();
     if (!g.paused && !g.over && RESUMABLE.has(g.mode)) {
       ui.autosave += dt;
       if (ui.autosave >= AUTOSAVE_MS) { ui.autosave = 0; storeResume(); persist(); }
@@ -1761,7 +2708,15 @@ function loop(ts) {
    KEYBOARD
    ===================================================================== */
 const GAME_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'Space', 'KeyX', 'KeyZ', 'KeyA',
-  'KeyC', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'Escape', 'KeyP', 'KeyR', 'KeyV', 'Enter']);
+  'KeyC', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'Escape', 'KeyP', 'KeyR', 'KeyV', 'KeyM', 'Enter']);
+
+function toggleMute() {
+  save.settings.muted = !save.settings.muted;
+  persist(); Music.refresh();
+  if (!save.settings.muted) Sfx.play('test');
+  toast('Sound', save.settings.muted ? 'Muted' : 'Sound on', 'Press M to toggle', 1300);
+  if (ui.screen === 'settings') renderSettings();
+}
 
 const seenKeys = new WeakSet();
 function onKeySafe(e) {
@@ -1791,7 +2746,7 @@ function onKey(e) {
   if (ui.screen !== 'game') {
     if (!down) return;
     if (ui.screen === 'menu') {
-      if (/^Digit[1-5]$/.test(e.code)) { stop(); return startGame(MODE_ORDER[+e.code.slice(5) - 1]); }
+      if (/^Digit[1-6]$/.test(e.code)) { stop(); return startGame(MODE_ORDER[+e.code.slice(5) - 1]); }
       if (e.code === 'ArrowDown' || e.code === 'ArrowUp') {
         stop();
         const i = MODE_ORDER.indexOf(ui.sel) + (e.code === 'ArrowDown' ? 1 : -1);
@@ -1801,8 +2756,18 @@ function onKey(e) {
       }
       if (e.code === 'Enter' || e.code === 'Space') { stop(); return startGame(ui.sel); }
     }
-    if (ui.screen === 'results' && (e.code === 'KeyR' || e.code === 'Enter')) { stop(); return startGame(ui.lastMode); }
+    if (ui.screen === 'results' && (e.code === 'KeyR' || e.code === 'Enter')) { stop(); return ui.lastMode === 'versus' && ui.vs ? startVersus(ui.vs.idx) : startGame(ui.lastMode); }
+    if (ui.screen === 'ladder') {
+      if (e.code === 'ArrowDown' || e.code === 'ArrowUp') {
+        stop();
+        ui.ladderSel = Math.max(0, Math.min(RANKS.length - 1, (ui.ladderSel ?? 0) + (e.code === 'ArrowDown' ? 1 : -1)));
+        return renderLadder();
+      }
+      if (e.code === 'Enter' || e.code === 'Space') { stop(); return startVersus(ui.ladderSel ?? nextRankIdx()); }
+      if (e.code === 'Escape') { stop(); return renderMenu(); }
+    }
     if (e.code === 'KeyV') { stop(); return cycleSkin(); }
+    if (e.code === 'KeyM') { stop(); return toggleMute(); }
     if (e.code === 'Escape') { stop(); return ui.screen === 'menu' ? hide() : goTab('play'); }
     return;
   }
@@ -1821,12 +2786,13 @@ function onKey(e) {
   }
 
   if (e.code === 'KeyV') { if (!e.repeat) cycleSkin(); return; }
+  if (e.code === 'KeyM') { if (!e.repeat) toggleMute(); return; }
   if (e.code === 'Escape' || e.code === 'KeyP') {
     if (g.over) return;
     if (!ui.turn.classList.contains('rt-hidden')) { hideTurn(); return; }
     return g.paused ? resumeGame() : pauseGame();
   }
-  if (e.code === 'KeyR') { if (!e.repeat) startGame(g.mode); return; }
+  if (e.code === 'KeyR') { if (!e.repeat) (g.mode === 'versus' ? startVersus(ui.vs.idx) : startGame(g.mode)); return; }
   if (e.code === 'Enter' && g.paused) return resumeGame();
   if (g.paused || g.over) return;
 
@@ -1891,8 +2857,9 @@ function destroy() {
   LISTENERS.length = 0;
   cancelAnimationFrame(ui.raf);
   clearInterval(ui.watch);
+  try { Music.stop(); } catch {}
   ui.ro?.disconnect();
-  for (const id of ['rt-root', 'rt-fab', 'rt-toasts', 'rt-style']) document.getElementById(id)?.remove();
+  for (const id of ['rt-root', 'rt-fab', 'rt-toasts', 'rt-achpop', 'rt-style']) document.getElementById(id)?.remove();
 }
 
 /* =====================================================================
