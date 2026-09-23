@@ -2,7 +2,7 @@
  * @name RiftTris
  * @author Cami (github.com/Mixiruri · Discord @soriita)
  * @description Tetris inside the League client: 5 modes, 25 achievements, 5 skins and a 90-second Rapid mode built for champ select.
- * @version 1.6.0
+ * @version 1.7.0
  */
 
 /* =====================================================================
@@ -13,7 +13,7 @@ const RAPID_MS = 90_000;
 const LOCK_MS = 500;
 const MAX_RESETS = 15;
 const AUTOSAVE_MS = 5000;
-const VERSION = '1.6.0';
+const VERSION = '1.7.0';
 
 const COLS = 10, ROWS = 22, VIS = 20, HIDDEN = ROWS - VIS;
 const CELL = 26;
@@ -30,9 +30,10 @@ const MODES = {
   classic: { name: 'Classic', tag: 'Marathon',   icon: '♛', desc: 'Level up every 10 lines until you top out.' },
   dig:     { name: 'Dig',     tag: '10 rows',    icon: '⛏', desc: 'Break through all the garbage at the bottom.' },
   zen:     { name: 'Zen',     tag: 'Endless',    icon: '☯', desc: 'No pressure, no game over. Perfect for queue time.' },
-  versus:  { name: 'Versus AI', tag: 'Ranked',   icon: '⚔', desc: 'Battle a bot from Iron to Challenger. Clear lines to send garbage.' },
+  versus:  { name: 'Versus AI', tag: 'Ladder',   icon: '⚔', desc: 'Pick any bot from Iron to Challenger and beat it to earn its badge.' },
+  ranked:  { name: 'Ranked Solo', tag: 'Tryhard', icon: '♜', desc: 'A fixed rank with LP, promotion series and demotions. No restarts.' },
 };
-const MODE_ORDER = ['rapid', 'sprint', 'classic', 'dig', 'zen', 'versus'];
+const MODE_ORDER = ['rapid', 'sprint', 'classic', 'dig', 'zen', 'versus', 'ranked'];
 const RESUMABLE = new Set(['sprint', 'classic', 'dig', 'zen']);
 
 const ACH = [
@@ -72,7 +73,16 @@ const ACH = [
   { id: 'vs_grandmaster', name: 'Grandmaster Flash', desc: 'Beat the Grandmaster AI.' },
   { id: 'vs_challenger',  name: 'Apex Predator',     desc: 'Beat the Challenger AI.' },
   { id: 'vs_flawless',    name: 'Flawless Victory',  desc: 'Beat Gold or higher without taking a single garbage line.' },
+  { id: 'rk_first',       name: 'Placements Done',   desc: 'Win your first Ranked Solo game.' },
+  { id: 'rk_promo',       name: 'Promoted',          desc: 'Win a promotion series in Ranked Solo.' },
+  { id: 'rk_clean',       name: 'Clean Sweep',       desc: 'Win a promotion series 2-0.' },
+  { id: 'rk_gold',        name: 'Gold Standard',     desc: 'Reach Gold in Ranked Solo.' },
+  { id: 'rk_diamond',     name: 'Shine Bright',      desc: 'Reach Diamond in Ranked Solo.' },
+  { id: 'rk_challenger',  name: 'Top of the Ladder', desc: 'Reach Challenger in Ranked Solo.' },
 ];
+// losses allowed at 0 LP before you drop a tier (Iron can't drop)
+const SHIELD = [Infinity, 4, 4, 3, 3, 3, 2, 2, 1, 1];
+const LP_WIN = 20, LP_LOSS = 18;
 
 // AI ranks: pps = pieces per second, err = chance of a sloppy placement,
 // hold = uses hold, tet = how hard it builds for Tetrises
@@ -128,6 +138,13 @@ ACH_ICONS.vs_gold = shieldIcon('G'); ACH_ICONS.vs_platinum = shieldIcon('P'); AC
 ACH_ICONS.vs_diamond = shieldIcon('D'); ACH_ICONS.vs_master = shieldIcon('M'); ACH_ICONS.vs_grandmaster = shieldIcon('GM');
 ACH_ICONS.vs_challenger = shieldIcon('C', `<path fill="currentColor" stroke="none" d="M7.5 9.5l2.4 2 2.1-3.6 2.1 3.6 2.4-2-1 5.5H8.5z"/>`);
 ACH_ICONS.vs_flawless = shieldIcon('', `<path d="M8.3 11.8l2.6 2.6 4.8-5"/>`);
+const chev = (y) => `<path d="M8.5 ${y}l3.5-3 3.5 3"/>`;
+ACH_ICONS.rk_first = shieldIcon('', `<text x="12" y="15.2" text-anchor="middle" font-family="Arial, sans-serif" font-weight="700" font-size="8.5" fill="currentColor" stroke="none">1</text>`);
+ACH_ICONS.rk_promo = shieldIcon('', chev(12.5));
+ACH_ICONS.rk_clean = shieldIcon('', chev(10.5) + chev(14.5));
+ACH_ICONS.rk_gold = shieldIcon('', `<text x="12" y="13.6" text-anchor="middle" font-family="Arial, sans-serif" font-weight="700" font-size="7" fill="currentColor" stroke="none">G</text>${chev(18)}`);
+ACH_ICONS.rk_diamond = shieldIcon('', `<path d="M9 10.5l1.5-2h3l1.5 2-3 4z"/>${chev(18)}`);
+ACH_ICONS.rk_challenger = shieldIcon('', `<path fill="currentColor" stroke="none" d="M7.8 8.5l2.3 1.9 1.9-3.3 1.9 3.3 2.3-1.9-.9 4.8H8.7z"/>${chev(18)}`);
 // full-color emblem for the ladder screen
 const rankEmblem = (r, size = 34) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}"><defs><linearGradient id="rg-${r.id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${r.color}"/><stop offset="1" stop-color="${r.color}" stop-opacity=".55"/></linearGradient></defs>
   <path d="M12 2l8 3v6.5c0 4.9-3.3 8.8-8 10.5-4.7-1.7-8-5.6-8-10.5V5z" fill="url(#rg-${r.id})" stroke="rgba(0,0,0,.45)" stroke-width="1"/>
@@ -292,6 +309,8 @@ const DEFAULT_SAVE = {
   settings: { das: 133, arr: 33, sdf: 25, ghost: true, champPill: true, autoPause: true, fabPos: null, skin: 'hextech', sfx: true, sfxVol: 50, music: true, musicVol: 35, muted: false, musicLoop: null },
   best: {}, played: {}, ach: {}, skinsUsed: {}, resume: null, history: [],
   versus: { beaten: {}, rec: {} },
+  ranked: { tier: 0, lp: 0, series: null, zeroL: 0, tw: 0, tl: 0, w: 0, l: 0, peak: 0 },
+  profile: { name: 'Summoner', char: 'cat', color: null, hat: 'none', face: 'none' },
   totals: { games: 0, lines: 0, tetrises: 0, tspins: 0, playMs: 0, pieces: 0 },
 };
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -299,7 +318,7 @@ const clone = o => JSON.parse(JSON.stringify(o));
 function mergeSave(raw) {
   const s = clone(DEFAULT_SAVE);
   if (raw && typeof raw === 'object') {
-    for (const k of ['settings', 'best', 'played', 'ach', 'skinsUsed', 'totals', 'versus']) Object.assign(s[k], raw[k] || {});
+    for (const k of ['settings', 'best', 'played', 'ach', 'skinsUsed', 'totals', 'versus', 'ranked', 'profile']) Object.assign(s[k], raw[k] || {});
     if (raw.resume && typeof raw.resume === 'object') s.resume = raw.resume;
     if (Array.isArray(raw.history)) s.history = raw.history.slice(0, 20);
   }
@@ -1295,7 +1314,7 @@ function statsFor(g, S) {
     case 'sprint':  return [['TIME', t], ['LINES', `${Math.min(g.lines, 40)}/40`], ['PPS', pps(g)], ['PIECES', g.stats.pieces]];
     case 'classic': return [['SCORE', sc], ['LEVEL', g.level], ['LINES', g.lines], ['TIME', t]];
     case 'dig':     return [['TIME', t], ['GARBAGE', garbageLeft(g)], ['PIECES', g.stats.pieces], ['PPS', pps(g)]];
-    case 'versus':  return [['VS', ui.vs ? ui.vs.rank.name.toUpperCase() : '—', ui.vs ? ui.vs.rank.color : null], ['SENT', g.sent], ['LINES', g.lines], ['PPS', pps(g)]];
+    case 'versus':  return [['VS', ui.vs ? (ui.vs.rank.name.length > 9 ? ui.vs.rank.tag : ui.vs.rank.name.toUpperCase()) : '—', ui.vs ? ui.vs.rank.color : null], ['SENT', g.sent], ['LINES', g.lines], ['PPS', pps(g)]];
     default:        return [['LINES', g.lines], ['SCORE', sc], ['TIME', t], ['PPS', pps(g)]];
   }
 }
@@ -1495,11 +1514,323 @@ function drawModeIcon(canvas, mode) {
     dig:     ['G', [[0,0],[2,0],[3,0],[0,1],[1,1],[3,1]]],
     zen:     ['O', [[0,0],[1,0],[0,1],[1,1]]],
     versus:  ['Z', [[0,0],[1,0],[1,1],[2,1]]],
+    ranked:  ['T', [[0,0],[1,0],[2,0],[1,1]]],
   };
   const [t, cells] = shapes[mode];
   const mx = Math.max(...cells.map(c => c[0])) + 1, my = Math.max(...cells.map(c => c[1])) + 1;
   const ox = (W - mx * s) / 2, oy = (W - my * s) / 2;
   for (const [x, y] of cells) S.cell(ctx, ox + x * s, oy + y * s, s, S.colors[t], t);
+}
+
+/* =====================================================================
+   AVATARS — original little characters that react to the game
+   ===================================================================== */
+const CHARS = {
+  cat:     { name: 'Miso',   color: 0, top: 22, eyeY: 37, mouthY: 44 },
+  fox:     { name: 'Kit',    color: 1, top: 22, eyeY: 37, mouthY: 45 },
+  slime:   { name: 'Goo',    color: 5, top: 21, eyeY: 38, mouthY: 45 },
+  robot:   { name: 'Bolt',   color: 2, top: 20, eyeY: 35, mouthY: 45 },
+  ghost:   { name: 'Boo',    color: 7, top: 17, eyeY: 33, mouthY: 40 },
+  penguin: { name: 'Waddle', color: 6, top: 19, eyeY: 32, mouthY: 38 },
+};
+const CHAR_ORDER = ['cat', 'fox', 'slime', 'robot', 'ghost', 'penguin'];
+const BODY_COLORS = ['#f2a65a', '#ff7b3a', '#7fb3e6', '#b28dff', '#ff8fab', '#7fd68a', '#3b4150', '#eef0f7'];
+const HATS = [
+  { id: 'none', name: 'None' },
+  { id: 'party', name: 'Party hat' },
+  { id: 'beanie', name: 'Beanie' },
+  { id: 'bow', name: 'Bow' },
+  { id: 'headphones', name: 'Headphones' },
+  { id: 'wizard', name: 'Wizard hat', req: ['tst'], hint: 'Land a T-Spin Triple' },
+  { id: 'halo', name: 'Halo', req: ['zen100'], hint: 'Clear 100 lines in one Zen session' },
+  { id: 'crown', name: 'Crown', req: ['vs_diamond', 'rk_diamond'], hint: 'Beat the Diamond AI or reach Diamond in Ranked' },
+];
+const FACES = [
+  { id: 'none', name: 'None' },
+  { id: 'blush', name: 'Blush' },
+  { id: 'glasses', name: 'Glasses' },
+  { id: 'bandaid', name: 'Band-aid' },
+  { id: 'sunglasses', name: 'Sunglasses', req: ['sprint2'], hint: 'Finish Sprint in under 2:00' },
+  { id: 'monocle', name: 'Monocle', req: ['games25'], hint: 'Play 25 games' },
+];
+const unlockedItem = it => !it.req || it.req.some(id => save.ach[id]);
+
+function drawAvatar(ctx, px, prof, state, t) {
+  const C = CHARS[prof.char] || CHARS.cat;
+  const base = BODY_COLORS[prof.color ?? C.color] || BODY_COLORS[0];
+  const dark = shade(base, -0.28), light = shade(base, 0.35);
+  const k = px / 64;
+  ctx.save();
+  ctx.clearRect(0, 0, 64, 64);
+  ctx.scale(1, 1);
+  ctx.setTransform(k * (ctx.__dpr || 1), 0, 0, k * (ctx.__dpr || 1), 0, 0);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+  // motion per state
+  let dy = Math.sin(t * 2.2) * 1.2, dx = 0, sq = 1;
+  if (prof.char === 'ghost') dy = Math.sin(t * 2) * 2.5;
+  if (state === 'happy') dy -= Math.abs(Math.sin(t * 9)) * 3;
+  if (state === 'excited' || state === 'cheer') { dy -= Math.abs(Math.sin(t * 8)) * 6; sq = 1 + Math.sin(t * 16) * 0.03; }
+  if (state === 'hurt') dx = Math.sin(t * 60) * 2;
+  if (state === 'sad') dy = 2 + Math.sin(t * 1.5) * 0.6;
+  ctx.translate(32 + dx, 34 + dy);
+  ctx.scale(1 / sq, sq);
+  ctx.translate(-32, -34);
+
+  // ---- body
+  const E = C.eyeY, M = C.mouthY;
+  switch (prof.char) {
+    case 'cat': {
+      ctx.fillStyle = base;
+      ctx.beginPath(); ctx.moveTo(17, 30); ctx.lineTo(20, 14); ctx.lineTo(30, 24); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(47, 30); ctx.lineTo(44, 14); ctx.lineTo(34, 24); ctx.fill();
+      ctx.fillStyle = '#ffb3c6';
+      ctx.beginPath(); ctx.moveTo(20.5, 26); ctx.lineTo(21.5, 18.5); ctx.lineTo(27, 24); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(43.5, 26); ctx.lineTo(42.5, 18.5); ctx.lineTo(37, 24); ctx.fill();
+      ctx.fillStyle = base; ctx.beginPath(); ctx.ellipse(32, 38, 17, 15, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = dark; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(14, 41); ctx.lineTo(21, 42); ctx.moveTo(14, 45); ctx.lineTo(21, 44); ctx.moveTo(50, 41); ctx.lineTo(43, 42); ctx.moveTo(50, 45); ctx.lineTo(43, 44); ctx.stroke();
+      break;
+    }
+    case 'fox': {
+      ctx.fillStyle = base;
+      ctx.beginPath(); ctx.moveTo(15, 32); ctx.lineTo(17, 10); ctx.lineTo(30, 24); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(49, 32); ctx.lineTo(47, 10); ctx.lineTo(34, 24); ctx.fill();
+      ctx.fillStyle = '#fff4e6';
+      ctx.beginPath(); ctx.moveTo(18, 22); ctx.lineTo(17.5, 13); ctx.lineTo(25, 21); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(46, 22); ctx.lineTo(46.5, 13); ctx.lineTo(39, 21); ctx.fill();
+      ctx.fillStyle = base; ctx.beginPath(); ctx.ellipse(32, 38, 18, 14.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff4e6'; ctx.beginPath(); ctx.ellipse(32, 45, 10, 7, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#2a2230'; ctx.beginPath(); ctx.ellipse(32, 41.5, 2, 1.4, 0, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'slime': {
+      const g = ctx.createLinearGradient(0, 20, 0, 54);
+      g.addColorStop(0, light); g.addColorStop(1, base);
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.moveTo(12, 52); ctx.bezierCurveTo(10, 30, 22, 20, 32, 20); ctx.bezierCurveTo(42, 20, 54, 30, 52, 52);
+      ctx.quadraticCurveTo(46, 55, 40, 52); ctx.quadraticCurveTo(32, 56, 24, 52); ctx.quadraticCurveTo(18, 55, 12, 52); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.beginPath(); ctx.ellipse(22, 29, 4, 2.5, -0.6, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'robot': {
+      ctx.strokeStyle = dark; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(32, 21); ctx.lineTo(32, 14); ctx.stroke();
+      ctx.fillStyle = Math.sin(t * 4) > 0 ? '#ff5d6c' : '#ffd166'; ctx.beginPath(); ctx.arc(32, 13, 2.4, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = base; rrect(ctx, 14, 21, 36, 31, 7); ctx.fill();
+      ctx.fillStyle = dark; ctx.fillRect(11, 32, 3, 9); ctx.fillRect(50, 32, 3, 9);
+      ctx.fillStyle = '#141a26'; rrect(ctx, 18, 28, 28, 13, 4); ctx.fill();
+      break;
+    }
+    case 'ghost': {
+      ctx.fillStyle = base;
+      ctx.beginPath(); ctx.moveTo(14, 50); ctx.lineTo(14, 34); ctx.bezierCurveTo(14, 20, 50, 20, 50, 34); ctx.lineTo(50, 50);
+      const w = Math.sin(t * 5) * 1.5;
+      ctx.quadraticCurveTo(47, 55 + w, 44, 50); ctx.quadraticCurveTo(41, 55 - w, 38, 50); ctx.quadraticCurveTo(35, 55 + w, 32, 50);
+      ctx.quadraticCurveTo(29, 55 - w, 26, 50); ctx.quadraticCurveTo(23, 55 + w, 20, 50); ctx.quadraticCurveTo(17, 55 - w, 14, 50); ctx.fill();
+      break;
+    }
+    case 'penguin': {
+      ctx.fillStyle = base; ctx.beginPath(); ctx.ellipse(32, 36, 17, 18, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(14.5, 40, 3.5, 8, 0.4, 0, Math.PI * 2); ctx.ellipse(49.5, 40, 3.5, 8, -0.4, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#f7f7fb'; ctx.beginPath(); ctx.ellipse(32, 39, 11.5, 13.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffb347'; ctx.beginPath(); ctx.moveTo(29, 36.5); ctx.lineTo(35, 36.5); ctx.lineTo(32, 40.5); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(27, 54, 4, 1.8, 0, 0, Math.PI * 2); ctx.ellipse(37, 54, 4, 1.8, 0, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+  }
+
+  // ---- face
+  const robot = prof.char === 'robot';
+  const darkBody = BODY_COLORS.indexOf(base) === 6;
+  const ink = robot ? '#7df9ff' : prof.char === 'penguin' ? '#1e2230' : darkBody ? '#f2f2f7' : '#2a2230';
+  const eyeInk = prof.char === 'penguin' ? '#1e2230' : ink;
+  const blink = state === 'idle' && (t % 3.6) < 0.12;
+  const ex = 7;
+  ctx.strokeStyle = eyeInk; ctx.fillStyle = eyeInk; ctx.lineWidth = 2;
+  if (robot) { ctx.shadowColor = '#7df9ff'; ctx.shadowBlur = 4; }
+  const eyes = (fn) => { fn(32 - ex); fn(32 + ex); };
+  const hideEyes = prof.face === 'sunglasses' && state !== 'excited';
+  if (!hideEyes) {
+    if (blink || state === 'focus') eyes(x => { ctx.beginPath(); ctx.moveTo(x - 2.5, E); ctx.lineTo(x + 2.5, E); ctx.stroke(); });
+    else if (state === 'happy' || state === 'cheer') eyes(x => { ctx.beginPath(); ctx.arc(x, E + 1, 2.6, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke(); });
+    else if (state === 'excited') eyes(x => { star(ctx, x, E, 3.6, '#ffd84d'); });
+    else if (state === 'hurt') eyes(x => {
+      ctx.save(); ctx.fillStyle = '#fff'; ctx.shadowBlur = 0; ctx.beginPath(); ctx.arc(x, E, 3.4, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      ctx.beginPath(); ctx.arc(x, E, 1.2, 0, Math.PI * 2); ctx.fill();
+    });
+    else if (state === 'sad') eyes(x => { ctx.beginPath(); ctx.arc(x, E - 1, 2.6, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke(); });
+    else eyes(x => {
+      ctx.beginPath(); ctx.arc(x, E, 2.3, 0, Math.PI * 2); ctx.fill();
+      if (!robot) { ctx.save(); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x - 0.8, E - 0.9, 0.8, 0, Math.PI * 2); ctx.fill(); ctx.restore(); }
+    });
+    if (state === 'worried' || state === 'hurt') {
+      ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(32 - ex - 3, E - 5.5); ctx.lineTo(32 - ex + 2.5, E - 4); ctx.moveTo(32 + ex + 3, E - 5.5); ctx.lineTo(32 + ex - 2.5, E - 4); ctx.stroke();
+      ctx.lineWidth = 2;
+    }
+  }
+  // mouth
+  const my = prof.char === 'penguin' ? M + 5 : M;
+  ctx.lineWidth = 1.6;
+  if (state === 'happy' || state === 'excited' || state === 'cheer') {
+    ctx.save(); ctx.fillStyle = robot ? '#7df9ff' : '#5b2333';
+    ctx.beginPath(); ctx.moveTo(28, my - 1); ctx.quadraticCurveTo(32, my + (state === 'happy' ? 4.5 : 6.5), 36, my - 1); ctx.closePath(); ctx.fill(); ctx.restore();
+  } else if (state === 'hurt') { ctx.beginPath(); ctx.ellipse(32, my + 1, 1.8, 2.4, 0, 0, Math.PI * 2); ctx.stroke(); }
+  else if (state === 'sad') { ctx.beginPath(); ctx.arc(32, my + 3, 3, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke(); }
+  else if (state === 'worried') { ctx.beginPath(); ctx.moveTo(28.5, my + 1); ctx.quadraticCurveTo(30, my - 0.5, 31.5, my + 1); ctx.quadraticCurveTo(33, my + 2.5, 35.5, my + 0.5); ctx.stroke(); }
+  else if (state === 'focus') { ctx.beginPath(); ctx.moveTo(29.5, my + 0.5); ctx.lineTo(34.5, my + 0.5); ctx.stroke(); }
+  else if (prof.char === 'cat') { ctx.beginPath(); ctx.arc(30.2, my - 0.5, 1.8, 0.1, Math.PI - 0.1); ctx.arc(33.8, my - 0.5, 1.8, 0.1, Math.PI - 0.1); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.arc(32, my - 1.5, 3, Math.PI * 0.2, Math.PI * 0.8); ctx.stroke(); }
+  ctx.shadowBlur = 0;
+
+  // ---- face accessory
+  const cheek = (x) => { ctx.beginPath(); ctx.ellipse(x, E + 5, 2.8, 1.6, 0, 0, Math.PI * 2); ctx.fill(); };
+  if (prof.face === 'blush' || state === 'cheer' || state === 'excited') { ctx.fillStyle = 'rgba(255,110,150,.45)'; cheek(32 - 12); cheek(32 + 12); }
+  if (prof.face === 'glasses') {
+    ctx.strokeStyle = '#1b1f2a'; ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.arc(32 - ex, E, 4.2, 0, Math.PI * 2); ctx.moveTo(32 + ex + 4.2, E); ctx.arc(32 + ex, E, 4.2, 0, Math.PI * 2);
+    ctx.moveTo(32 - ex + 4.2, E - 0.5); ctx.lineTo(32 + ex - 4.2, E - 0.5); ctx.stroke();
+  }
+  if (prof.face === 'sunglasses' && state !== 'excited') {
+    ctx.fillStyle = '#12151c';
+    rrect(ctx, 32 - ex - 5, E - 3.5, 10, 6.5, 2.5); ctx.fill(); rrect(ctx, 32 + ex - 5, E - 3.5, 10, 6.5, 2.5); ctx.fill();
+    ctx.fillRect(32 - 2.5, E - 2.5, 5, 1.4);
+    ctx.fillStyle = 'rgba(255,255,255,.5)'; ctx.fillRect(32 - ex - 3, E - 2.2, 3, 1); ctx.fillRect(32 + ex - 3, E - 2.2, 3, 1);
+  }
+  if (prof.face === 'monocle') {
+    ctx.strokeStyle = '#d9aa45'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(32 + ex, E, 4.3, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(32 + ex + 3, E + 3.5); ctx.quadraticCurveTo(46, E + 10, 44, E + 16); ctx.stroke();
+  }
+  if (prof.face === 'bandaid') {
+    ctx.save(); ctx.translate(32 + 12, E + 5); ctx.rotate(-0.5);
+    ctx.fillStyle = '#f4c7a1'; rrect(ctx, -4.5, -1.8, 9, 3.6, 1.6); ctx.fill();
+    ctx.fillStyle = '#e0a98a'; ctx.fillRect(-1.2, -1.8, 2.4, 3.6); ctx.restore();
+  }
+
+  // ---- hat
+  const T = C.top;
+  switch (prof.hat) {
+    case 'party': {
+      ctx.fillStyle = '#ff5d8f'; ctx.beginPath(); ctx.moveTo(25, T + 4); ctx.lineTo(39, T + 4); ctx.lineTo(33, T - 13); ctx.fill();
+      ctx.strokeStyle = '#ffd84d'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(27.5, T - 1); ctx.lineTo(36.5, T - 1); ctx.moveTo(30, T - 6); ctx.lineTo(35, T - 6); ctx.stroke();
+      ctx.fillStyle = '#ffd84d'; ctx.beginPath(); ctx.arc(33, T - 13, 2.4, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'beanie': {
+      ctx.fillStyle = '#5a7bd8'; ctx.beginPath(); ctx.arc(32, T + 7, 13, Math.PI, 0); ctx.fill();
+      ctx.fillStyle = '#3f5bb0'; rrect(ctx, 18.5, T + 4, 27, 5, 2); ctx.fill();
+      ctx.fillStyle = '#eef0f7'; ctx.beginPath(); ctx.arc(32, T - 6.5, 3, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'bow': {
+      ctx.fillStyle = '#ff5d8f';
+      ctx.beginPath(); ctx.moveTo(41, T + 3); ctx.lineTo(34.5, T - 2); ctx.lineTo(35, T + 8); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(41, T + 3); ctx.lineTo(47.5, T - 2); ctx.lineTo(47, T + 8); ctx.fill();
+      ctx.fillStyle = '#d93c6f'; ctx.beginPath(); ctx.arc(41, T + 3, 2.3, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'headphones': {
+      ctx.strokeStyle = '#2b2f3a'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(32, E, 19, Math.PI * 1.08, Math.PI * 1.92); ctx.stroke();
+      ctx.fillStyle = '#e2504f'; rrect(ctx, 11, E - 5, 6, 12, 3); ctx.fill(); rrect(ctx, 47, E - 5, 6, 12, 3); ctx.fill();
+      break;
+    }
+    case 'wizard': {
+      ctx.fillStyle = '#5b3fb0'; ctx.beginPath(); ctx.ellipse(32, T + 4, 15, 3.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(23, T + 3); ctx.lineTo(41, T + 3); ctx.lineTo(37, T - 16); ctx.fill();
+      star(ctx, 31, T - 3, 2.2, '#ffd84d'); star(ctx, 36, T - 9, 1.6, '#ffd84d');
+      break;
+    }
+    case 'halo': {
+      ctx.save(); ctx.strokeStyle = '#ffe28a'; ctx.lineWidth = 2.2; ctx.shadowColor = '#ffe28a'; ctx.shadowBlur = 6;
+      ctx.beginPath(); ctx.ellipse(32, T - 5 + Math.sin(t * 3) * 1, 10, 3, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+      break;
+    }
+    case 'crown': {
+      ctx.fillStyle = '#f4c542';
+      ctx.beginPath(); ctx.moveTo(22, T + 5); ctx.lineTo(22, T - 5); ctx.lineTo(27, T); ctx.lineTo(32, T - 8); ctx.lineTo(37, T); ctx.lineTo(42, T - 5); ctx.lineTo(42, T + 5); ctx.fill();
+      ctx.fillStyle = '#e2504f'; ctx.beginPath(); ctx.arc(32, T + 1, 1.6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#4fb3e6'; ctx.beginPath(); ctx.arc(26, T + 2, 1.2, 0, Math.PI * 2); ctx.arc(38, T + 2, 1.2, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+  }
+
+  // ---- effects
+  ctx.setTransform(k * (ctx.__dpr || 1), 0, 0, k * (ctx.__dpr || 1), 0, 0);
+  if (state === 'hurt' || state === 'worried') {
+    ctx.fillStyle = '#7fd4ff';
+    const sy = 22 + ((t * 20) % 8);
+    ctx.beginPath(); ctx.moveTo(50, sy); ctx.quadraticCurveTo(53, sy + 5, 50, sy + 6.5); ctx.quadraticCurveTo(47, sy + 5, 50, sy); ctx.fill();
+  }
+  if (state === 'sad') {
+    ctx.fillStyle = '#7fd4ff';
+    const ty = E + 4 + ((t * 14) % 12);
+    ctx.beginPath(); ctx.ellipse(32 - ex - 1, ty, 1.3, 2, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  if (state === 'excited' || state === 'cheer') {
+    for (let i = 0; i < 6; i++) {
+      const a = t * 2 + i * (Math.PI / 3), r = 25 + Math.sin(t * 6 + i) * 3;
+      star(ctx, 32 + Math.cos(a) * r, 32 + Math.sin(a) * r * 0.8, 1.8, ['#ffd84d', '#ff8fab', '#7fd4ff'][i % 3]);
+    }
+  }
+  ctx.restore();
+}
+
+function star(ctx, x, y, r, color) {
+  ctx.save(); ctx.fillStyle = color; ctx.shadowBlur = 0; ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.45 : r;
+    ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+  }
+  ctx.fill(); ctx.restore();
+}
+
+// reaction state per board ('p' = player, 'ai' = opponent)
+const Av = {
+  p: { state: 'idle', until: 0 }, ai: { state: 'idle', until: 0 },
+  set(who, state, ms) {
+    const a = this[who];
+    if (a.until === Infinity && ms) return;          // final states (win/lose) stick
+    a.state = state; a.until = ms ? performance.now() + ms : Infinity;
+  },
+  reset() { for (const w of ['p', 'ai']) { this[w].state = 'idle'; this[w].until = 0; } },
+  event(who, name, d = {}) {
+    if (name === 'land' && d.n > 0) {
+      if (d.pc || d.n === 4 || (d.tspin && d.n > 0) || d.combo >= 3) this.set(who, 'excited', 1600);
+      else this.set(who, 'happy', 900);
+    } else if (name === 'garbage') this.set(who, 'hurt', 1100);
+    else if (name === 'level') this.set(who, 'happy', 800);
+    else if (name === 'win') this.set(who, 'cheer', 0);
+    else if (name === 'topout') this.set(who, 'sad', 0);
+  },
+  state(who, g) {
+    const a = this[who];
+    if (a.until !== Infinity && performance.now() > a.until) { a.state = 'idle'; a.until = 0; }
+    if (a.state !== 'idle' || !g) return a.state;
+    if (g.countdown > 0) return 'focus';
+    for (let y = 0; y < ROWS - 14; y++) if (g.board[y].some(Boolean)) return 'worried';
+    return 'idle';
+  },
+};
+
+function aiProfile(rankIdx) {
+  const hats = ['none', 'none', 'beanie', 'headphones', 'headphones', 'bow', 'party', 'wizard', 'halo', 'crown'];
+  return { char: 'robot', color: rankIdx >= 7 ? 3 : rankIdx >= 3 ? 2 : 6, hat: hats[rankIdx] || 'none', face: rankIdx >= 6 ? 'sunglasses' : 'none' };
+}
+
+function paintAvatar(canvas, prof, state, t) {
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const css = canvas.clientWidth || 52;
+  const w = Math.round(css * dpr);
+  if (canvas.width !== w) { canvas.width = w; canvas.height = w; }
+  const ctx = canvas.getContext('2d');
+  ctx.__dpr = 1;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, w, w);
+  drawAvatar(ctx, w, prof, state, t);
 }
 
 /* =====================================================================
@@ -1632,6 +1963,44 @@ html[data-rt-skin=retro] .rt-mode .n{font-size:10px;font-weight:400}
 .rt-mode .b b{font-size:13px;color:var(--rt-gold);font-weight:600;font-variant-numeric:tabular-nums}
 .rt-tagnow{display:inline-block;margin-left:6px;font-size:10px;color:var(--rt-teal);border:1px solid var(--rt-teal);padding:0 4px;vertical-align:1px}
 
+.rt-hud2{display:flex;align-items:center;gap:10px;margin:-6px 0 8px}
+.rt-pc{display:flex;align-items:center;gap:9px;min-width:0}
+.rt-pc.r{margin-left:auto;flex-direction:row-reverse;text-align:right}
+.rt-scr{position:relative;width:52px;height:52px;flex:0 0 52px;border:2px solid var(--rt-goldd);border-radius:calc(var(--rt-radius) + 4px);
+  background:radial-gradient(circle at 50% 35%,var(--rt-card),var(--rt-bg2));overflow:hidden;box-shadow:inset 0 0 12px rgba(0,0,0,.5)}
+.rt-scr::after{content:'';position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.12) 0 1px,transparent 1px 3px);opacity:.6}
+.rt-scr canvas{width:100%;height:100%;display:block}
+.rt-pc .nm{font-family:var(--rt-fd);font-weight:700;font-size:14px;color:var(--rt-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
+.rt-pc .sub{font-size:11px;color:var(--rt-muted);white-space:nowrap}
+.rt-vsb{font-family:var(--rt-fd);font-weight:700;color:var(--rt-red);font-size:13px;letter-spacing:.1em}
+.rt-hud2 .hk{margin-left:auto;font-size:11px;color:var(--rt-dim)}
+.rt-inp{background:var(--rt-bg2);border:1px solid var(--rt-line);border-radius:var(--rt-radius);color:var(--rt-text);font:inherit;font-size:13px;padding:6px 8px;width:190px;user-select:text;outline:none}
+.rt-inp:focus{border-color:var(--rt-gold)}
+.rt-prof{display:flex;gap:16px;align-items:flex-start}
+.rt-prof .big{flex:0 0 132px}
+.rt-prof .big .rt-scr{width:132px;height:132px}
+.rt-react{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.rt-chips2{display:flex;flex-wrap:wrap;gap:6px}
+.rt-chip2{display:flex;align-items:center;gap:6px;background:none;border:1px solid var(--rt-line);border-radius:var(--rt-radius);color:var(--rt-muted);font:inherit;font-size:11px;padding:4px 8px;cursor:pointer}
+.rt-chip2 canvas{width:30px;height:30px}
+.rt-chip2:hover{color:var(--rt-text)}
+.rt-chip2.on{border-color:var(--rt-gold);color:var(--rt-text)}
+.rt-chip2.lock{cursor:not-allowed;border-style:dashed}
+.rt-chip2.lock canvas{opacity:.35;filter:grayscale(1)}
+.rt-chip2 .tx{display:flex;flex-direction:column;align-items:flex-start;text-align:left;line-height:1.25}
+.rt-chip2 .tx svg{width:9px;height:9px;display:inline-block;vertical-align:-1px;margin-left:3px}
+.rt-chip2 small{font-size:10px;color:var(--rt-gold);max-width:170px;white-space:normal}
+.rt-sw{width:22px;height:22px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0}
+.rt-sw.on{border-color:var(--rt-text);box-shadow:0 0 0 2px var(--rt-goldd)}
+.rt-rk{display:flex;gap:16px;align-items:center;padding:12px;border:1px solid var(--rt-line2);background:var(--rt-card);border-radius:var(--rt-radius)}
+.rt-rk .tier{font-family:var(--rt-fd);font-weight:700;font-size:22px}
+.rt-lp{height:8px;background:var(--rt-bg2);border:1px solid var(--rt-line);border-radius:4px;overflow:hidden;margin:6px 0 4px;width:100%}
+.rt-lp i{display:block;height:100%;transition:width .8s ease}
+.rt-dots{display:flex;gap:6px;margin-top:4px}
+.rt-dots span{width:14px;height:14px;border-radius:50%;border:2px solid var(--rt-line);display:grid;place-items:center;font-size:9px}
+.rt-dots .w{background:var(--rt-teal);border-color:var(--rt-teal)}
+.rt-dots .l{background:var(--rt-red);border-color:var(--rt-red)}
+.rt-banner{margin:8px auto 0;padding:8px 12px;border:1px solid var(--rt-goldd);border-radius:var(--rt-radius);background:var(--rt-card);display:inline-flex;align-items:center;gap:10px;text-align:left}
 .rt-hud{display:flex;justify-content:space-between;align-items:baseline;margin:-4px 0 8px;color:var(--rt-muted);font-size:11px}
 .rt-hud b{font-family:var(--rt-fd);font-size:13px;color:var(--rt-text)}
 .rt-stage{position:relative;flex:1;min-height:0;perspective:1100px}
@@ -1640,7 +2009,8 @@ html[data-rt-skin=cube] .rt-stage canvas{transform:rotateX(12deg) scale(.96)}
 html[data-rt-skin=retro] .rt-stage canvas{image-rendering:pixelated}
 .rt-pause{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:var(--rt-back)}
 .rt-pause .t{font-family:var(--rt-fd);font-size:20px;font-weight:700;color:var(--rt-text);margin-bottom:8px}
-.rt-pause .rt-btn{width:200px}
+.rt-pause .rt-btn{width:auto;min-width:200px;max-width:90%;white-space:normal;height:auto;min-height:32px;padding:6px 18px}
+.rt-pause .note{font-size:11px;color:var(--rt-muted);margin-top:-2px}
 
 .rt-res{text-align:center;padding-top:6px}
 .rt-res .k{color:var(--rt-muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
@@ -1821,6 +2191,7 @@ function mount() {
         <div class="rt-tabs">
           <button class="rt-tab" data-act="tab:play">Play</button>
           <button class="rt-tab" data-act="tab:ach">Achievements</button>
+          <button class="rt-tab" data-act="tab:profile">Profile</button>
           <button class="rt-tab" data-act="tab:settings">Settings</button>
         </div>
         <span class="rt-sp"></span>
@@ -2044,6 +2415,7 @@ function nextRankIdx() {
 
 function bestText(mode) {
   if (mode === 'versus') { const r = currentRank(); return r ? r.name : 'Unranked'; }
+  if (mode === 'ranked') { const R = save.ranked; return R.w + R.l ? `${RANKS[R.tier].name} ${R.lp} LP` : 'Unranked'; }
   const b = save.best[mode];
   if (!b) return '—';
   if (mode === 'sprint' || mode === 'dig') return b.time ? fmt(b.time) : '—';
@@ -2069,9 +2441,11 @@ function setTab(tab) {
 function rerender() {
   if (ui.tab === 'ach') return renderAch();
   if (ui.tab === 'settings') return renderSettings();
+  if (ui.tab === 'profile') return renderProfile();
   if (ui.game && !ui.game.over && ui.screen !== 'menu') return renderGame();
   if (ui.screen === 'results' && ui.game) return renderResults(ui.game, ui.lastNew);
   if (ui.screen === 'ladder') return renderLadder();
+  if (ui.screen === 'lobby') return renderLobby();
   return renderMenu();
 }
 
@@ -2150,7 +2524,7 @@ function renderMenu() {
             <div class="n">${m.name}<small>${m.tag}</small>${id === 'rapid' && inChamp ? '<span class="rt-tagnow">Champ select</span>' : ''}</div>
             <div class="d">${m.desc}</div>
           </div>
-          <div class="b"><span>${id === 'versus' ? 'Rank' : 'Best'}</span><b>${bestText(id)}</b></div>
+          <div class="b"><span>${id === 'versus' || id === 'ranked' ? 'Rank' : 'Best'}</span><b>${bestText(id)}</b></div>
         </div>`;
       }).join('')}
     </div>
@@ -2176,23 +2550,49 @@ function fitCanvas() {
   }
 }
 
+function hudHtml(g) {
+  const P = save.profile, vs = ui.vs;
+  let sub = MODES[g.mode].name;
+  if (vs?.ranked) {
+    const R = save.ranked, t = RANKS[R.tier];
+    sub = R.series ? `Promo series vs ${RANKS[R.tier + 1].name}` : `${t.name} · ${R.lp} LP`;
+  }
+  const me = `<div class="rt-pc"><div class="rt-scr"><canvas data-av="p"></canvas></div>
+    <div><div class="nm">${escapeHtml(P.name || 'Summoner')}</div><div class="sub">${sub}</div></div></div>`;
+  if (!vs) return `<div class="rt-hud2">${me}<span class="hk">Esc pause · R restart · V skin · M mute</span></div>`;
+  return `<div class="rt-hud2">${me}<span class="rt-vsb">VS</span>
+    <div class="rt-pc r"><div class="rt-scr" style="border-color:${vs.rank.color}"><canvas data-av="ai"></canvas></div>
+    <div><div class="nm" style="color:${vs.rank.color}">${vs.rank.name} Bot</div><div class="sub">${vs.rank.pps.toFixed(2)} PPS</div></div></div></div>`;
+}
+
+function escapeHtml(t) { return String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+function paintHudAvatars(ts) {
+  const t = ts / 1000;
+  const pc = ui.body.querySelector('canvas[data-av="p"]');
+  if (pc) paintAvatar(pc, save.profile, Av.state('p', ui.game), t);
+  const ac = ui.body.querySelector('canvas[data-av="ai"]');
+  if (ac && ui.vs) paintAvatar(ac, aiProfile(ui.vs.idx), Av.state('ai', ui.vs.ai), t + 1.3);
+}
+
 function renderGame() {
   setTab('play');
   ui.screen = 'game';
   const g = ui.game, m = MODES[g.mode];
   ui.body.innerHTML = `
-    <div class="rt-hud"><b>${m.name}</b><span>Esc pause · R restart · V skin · M mute</span></div>
+    ${hudHtml(g)}
     <div class="rt-stage">
       <canvas></canvas>
       <div class="rt-pause ${g.paused ? '' : 'rt-hidden'}">
         <div class="t">Paused</div>
         <button class="rt-btn pri" data-act="resume">Resume</button>
+        ${ui.vs?.ranked ? `<button class="rt-btn ghost" data-act="surrender" style="color:var(--rt-red)">Surrender</button><div class="note">Surrendering counts as a loss</div>` : `
         <button class="rt-btn" data-act="restart">Restart</button>
         ${g.mode === 'zen' ? '<button class="rt-btn" data-act="endzen">End session</button>' : ''}
-        <button class="rt-btn ghost" data-act="menu">${RESUMABLE.has(g.mode) ? 'Save & quit' : 'Quit'}</button>
+        <button class="rt-btn ghost" data-act="menu">${RESUMABLE.has(g.mode) ? 'Save & quit' : 'Quit'}</button>`}
       </div>
     </div>`;
-  ui.canvas = ui.body.querySelector('canvas');
+  ui.canvas = ui.body.querySelector('.rt-stage canvas');
   ui.ctx = ui.canvas.getContext('2d');
   ui.pauseEl = ui.body.querySelector('.rt-pause');
   ui.cw = g.mode === 'versus' ? VS_W : CW;
@@ -2215,6 +2615,7 @@ function renderResults(g, isNew) {
   setTab('play');
   ui.screen = 'results'; ui.lastScreen = 'results';
   ui.canvas = null; ui.ctx = null; ui.ro?.disconnect(); ui.ro = null;
+  if (g.mode === 'versus' && ui.vs?.ranked) return renderRankedResults(g);
   if (g.mode === 'versus' && ui.vs) return renderVersusResults(g);
   const titles = {
     rapid: g.won ? "Time's up" : 'Topped out', sprint: g.won ? '40 lines' : 'Topped out', classic: 'Game over',
@@ -2282,7 +2683,7 @@ function renderAch() {
   const t = save.totals;
   const hrs = t.playMs / 3600000;
   const date = ts => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const histMain = h => h.mode === 'versus' ? `${h.won ? 'Won' : 'Lost'} vs ${h.rank || 'AI'}` : (h.mode === 'sprint' || h.mode === 'dig') && h.won ? fmt(h.elapsed) : h.mode === 'zen' ? `${h.lines} lines` : `${num(h.score)} pts`;
+  const histMain = h => h.mode === 'versus' || h.mode === 'ranked' ? `${h.won ? 'Won' : 'Lost'} vs ${h.rank || 'AI'}` : (h.mode === 'sprint' || h.mode === 'dig') && h.won ? fmt(h.elapsed) : h.mode === 'zen' ? `${h.lines} lines` : `${num(h.score)} pts`;
   const sorted = [...ACH].sort((a, b) => (save.ach[b.id] ? 1 : 0) - (save.ach[a.id] ? 1 : 0));
   ui.body.innerHTML = `
     <div class="rt-stats" style="margin-top:0">
@@ -2317,7 +2718,7 @@ function renderSettings() {
   const keys = [
     ['Move', '← →'], ['Soft drop', '↓'], ['Hard drop', 'Space'], ['Rotate right', '↑ / X'],
     ['Rotate left', 'Z / Ctrl'], ['Rotate 180°', 'A'], ['Hold', 'C / Shift'], ['Pause', 'Esc / P'],
-    ['Restart', 'R'], ['Change skin', 'V'], ['Mute all', 'M'], ['Open / close', 'Alt+T / F8'], ['Quick start', '1 – 5'],
+    ['Restart', 'R'], ['Change skin', 'V'], ['Mute all', 'M'], ['Open / close', 'Alt+T / F8'], ['Quick start', '1 – 7'],
   ];
   ui.body.innerHTML = `
     <div class="rt-sec">Skin</div>
@@ -2366,6 +2767,11 @@ function renderSettings() {
 function ioMsg(t) { const m = ui.body.querySelector('.rt-io-msg'); if (m) m.textContent = t; }
 
 function onSettingInput(e) {
+  if (e.target.dataset?.prof === 'name') {
+    save.profile.name = e.target.value.replace(/[<>]/g, '').slice(0, 16);
+    persist();
+    return;
+  }
   const key = e.target.dataset?.set;
   if (!key) return;
   if (e.target.type === 'checkbox') save.settings[key] = e.target.checked;
@@ -2392,6 +2798,15 @@ function onClick(e) {
   if (act.startsWith('skin:')) return setSkin(act.slice(5));
   if (act.startsWith('link:')) return openLink(act.slice(5));
   if (act.startsWith('achprev:')) return achPopup(act.slice(8));
+  if (act.startsWith('prof:')) {
+    const [, key, val] = act.split(':');
+    save.profile[key] = key === 'color' ? +val : val;
+    if (key === 'char') save.profile.color = null;
+    persist(); renderProfile();
+    ui.profReact = { state: 'happy', until: performance.now() + 700 };
+    return;
+  }
+  if (act.startsWith('react:')) { ui.profReact = { state: act.slice(6), until: performance.now() + 1600 }; return; }
   if (act.startsWith('rank:')) {
     const i = +act.slice(5);
     if (e.detail >= 2) return startVersus(i);
@@ -2413,12 +2828,15 @@ function onClick(e) {
     case 'sfxtest': return Sfx.play('test');
     case 'menu': return renderMenu();
     case 'resume': return resumeGame();
-    case 'restart': return ui.game.mode === 'versus' ? startVersus(ui.vs.idx) : startGame(ui.game.mode);
+    case 'restart': return ui.vs?.ranked ? null : ui.game.mode === 'versus' ? startVersus(ui.vs.idx) : startGame(ui.game.mode);
+    case 'surrender': if (ui.game && !ui.game.over) { ui.game.paused = false; ui.pauseEl?.classList.add('rt-hidden'); ui.game.finish(false); } return;
+    case 'queue': return startRanked();
+    case 'lobby': return renderLobby();
     case 'fight': return startVersus(ui.ladderSel ?? nextRankIdx());
     case 'climb': return startVersus(nextRankIdx());
     case 'ladder': return renderLadder();
     case 'nextrank': return startVersus((ui.vs?.idx ?? 0) + 1);
-    case 'again': return ui.lastMode === 'versus' && ui.vs ? startVersus(ui.vs.idx) : startGame(ui.lastMode);
+    case 'again': return ui.lastMode === 'ranked' ? startRanked() : ui.lastMode === 'versus' && ui.vs ? startVersus(ui.vs.idx) : startGame(ui.lastMode);
     case 'endzen': ui.game.paused = false; return ui.game.finish(true);
     case 'goclient': hideTurn(); return hide();
     case 'dismissturn': hideTurn(); return;
@@ -2452,7 +2870,184 @@ function onClick(e) {
 /* =====================================================================
    GAME FLOW
    ===================================================================== */
-const HOOKS = () => ({ onClear, onFinish, sfx: (n, d) => Sfx.play(n, d) });
+const HOOKS = () => ({ onClear, onFinish, sfx: (n, d) => { Sfx.play(n, d); Av.event('p', n, d); } });
+
+/* ---------- Ranked Solo ---------- */
+function applyRanked(won, g) {
+  const R = save.ranked, top = RANKS.length - 1;
+  const before = { tier: R.tier, lp: R.lp, series: R.series ? { ...R.series } : null };
+  let delta = 0, event = null;
+  if (won) R.w++; else R.l++;
+  if (R.series) {
+    if (won) R.series.w++; else R.series.l++;
+    if (R.series.w >= 2) {
+      const clean = R.series.l === 0;
+      R.tier = Math.min(top, R.tier + 1); R.lp = 0; R.series = null; R.tw = 0; R.tl = 0; R.zeroL = 0;
+      event = 'promoted';
+      unlock('rk_promo'); if (clean) unlock('rk_clean');
+    } else if (R.series.l >= 2) { R.series = null; R.lp = 70; event = 'series_lost'; }
+    else event = 'series';
+  } else if (won) {
+    R.tw++; R.zeroL = 0;
+    delta = LP_WIN + (g.received === 0 ? 3 : 0) + Math.min(5, Math.floor(Math.max(0, g.sent - g.received) / 6));
+    R.lp += delta;
+    if (R.tier < top && R.lp >= 100) { R.lp = 100; R.series = { w: 0, l: 0 }; event = 'series_start'; }
+  } else {
+    R.tl++;
+    if (R.lp === 0) R.zeroL++;
+    delta = -Math.min(R.lp, LP_LOSS);
+    R.lp += delta;
+    const sh = SHIELD[R.tier];
+    if (R.tier > 0 && (R.zeroL > sh || R.tl - R.tw >= sh + 2)) {
+      R.tier--; R.lp = 75; R.tw = 0; R.tl = 0; R.zeroL = 0; event = 'demoted';
+    }
+  }
+  R.peak = Math.max(R.peak, R.tier);
+  if (won) unlock('rk_first');
+  if (R.tier >= 3) unlock('rk_gold');
+  if (R.tier >= 6) unlock('rk_diamond');
+  if (R.tier >= 9) unlock('rk_challenger');
+  ui.rk = { won, delta, event, before, after: { tier: R.tier, lp: R.lp, series: R.series ? { ...R.series } : null } };
+  persist();
+}
+
+function shieldText(R) {
+  if (R.tier === 0) return "Iron can't be demoted.";
+  const sh = SHIELD[R.tier];
+  const zeroLeft = Math.max(0, sh - R.zeroL);
+  const gap = R.tl - R.tw, gapLeft = sh + 2 - gap;
+  return `Demotion shield: ${R.lp === 0 ? `${zeroLeft} more loss${zeroLeft === 1 ? '' : 'es'} at 0 LP` : `kicks in at 0 LP (${sh} losses)`} · tier record ${R.tw}W ${R.tl}L (drop at ${gapLeft} more net loss${gapLeft === 1 ? '' : 'es'})`;
+}
+
+function seriesDots(series) {
+  const dots = [];
+  for (let i = 0; i < series.w; i++) dots.push('<span class="w">✓</span>');
+  for (let i = 0; i < series.l; i++) dots.push('<span class="l">✕</span>');
+  while (dots.length < 3) dots.push('<span></span>');
+  return `<div class="rt-dots">${dots.join('')}</div>`;
+}
+
+function rankCard(R) {
+  const t = RANKS[R.tier], top = R.tier === RANKS.length - 1;
+  return `<div class="rt-rk">${rankEmblem(t, 72)}
+    <div style="flex:1;min-width:0">
+      <div class="tier" style="color:${t.color}">${t.name}</div>
+      ${R.series ? `<div style="font-size:12px">Promotion series vs <b style="color:${RANKS[R.tier + 1].color}">${RANKS[R.tier + 1].name}</b> · win 2 of 3</div>${seriesDots(R.series)}`
+        : `<div class="rt-lp"><i style="width:${Math.min(100, R.lp)}%;background:${t.color}"></i></div><div style="font-size:12px"><b>${R.lp} LP</b>${top ? '' : ' / 100'}</div>`}
+    </div></div>`;
+}
+
+function renderLobby() {
+  setTab('play');
+  ui.screen = 'lobby';
+  const R = save.ranked, P = save.profile;
+  const games = R.w + R.l;
+  ui.body.innerHTML = `
+    <div class="rt-sec">Ranked Solo · ${escapeHtml(P.name || 'Summoner')}</div>
+    ${rankCard(R)}
+    <div class="rt-note" style="margin-top:8px">${shieldText(R)}</div>
+    <div class="rt-stats" style="grid-template-columns:repeat(4,1fr);margin-top:12px">
+      <div><span>Season</span><b>${R.w}W ${R.l}L</b></div>
+      <div><span>Win rate</span><b>${games ? Math.round(R.w / games * 100) + '%' : '—'}</b></div>
+      <div><span>Peak</span><b style="color:${RANKS[R.peak].color}">${games ? RANKS[R.peak].name : '—'}</b></div>
+      <div><span>Next opponent</span><b>${RANKS[R.series ? R.tier + 1 : R.tier].name} Bot</b></div>
+    </div>
+    <div class="rt-sec">How it works</div>
+    <div class="rt-note">A win gives about +${LP_WIN} LP (more if you win cleanly) and a loss costs −${LP_LOSS}. At 100 LP you play a best-of-3 promotion series against the next tier's bot.
+      At 0 LP your demotion shield starts counting down, and if you run out, or fall too many games below even in the tier, you drop a tier with 75 LP.
+      There are no restarts here: surrendering or closing the client mid-game counts as a loss.</div>
+    <div class="rt-actions">
+      <button class="rt-btn ghost" data-act="menu">Modes</button>
+      <span class="rt-sp"></span>
+      <button class="rt-btn pri" data-act="queue">${R.series ? 'Play promo game' : 'Find match'}</button>
+    </div>`;
+}
+
+function renderRankedResults(g) {
+  const rk = ui.rk || {}, R = save.ranked, t = RANKS[R.tier];
+  const cells = [
+    ['Sent', g.sent], ['Received', g.received], ['Lines', g.lines], ['PPS', pps(g)],
+    ['Tetrises', g.stats.tetrises], ['T-Spins', g.stats.tspins], ['Max combo', Math.max(0, g.stats.maxCombo)], ['Time', fmt(g.elapsed)],
+  ];
+  let banner = '';
+  if (rk.event === 'promoted') banner = `<div class="rt-banner">${rankEmblem(t, 44)}<div><div class="pb">Promoted!</div><div>Welcome to <b style="color:${t.color}">${t.name}</b></div></div></div>`;
+  else if (rk.event === 'demoted') banner = `<div class="rt-banner" style="border-color:var(--rt-red)">${rankEmblem(t, 44)}<div><div class="pb" style="color:var(--rt-red)">Demoted</div><div>Back to <b style="color:${t.color}">${t.name}</b> with 75 LP</div></div></div>`;
+  else if (rk.event === 'series_start') banner = `<div class="rt-banner"><div><div class="pb">Promotion series!</div><div>Win 2 of 3 against the <b style="color:${RANKS[R.tier + 1].color}">${RANKS[R.tier + 1].name}</b> bot</div></div></div>`;
+  else if (rk.event === 'series') banner = `<div class="rt-banner"><div><div class="pb">Promotion series</div>${seriesDots(R.series)}</div></div>`;
+  else if (rk.event === 'series_lost') banner = `<div class="rt-banner" style="border-color:var(--rt-red)"><div><div class="pb" style="color:var(--rt-red)">Series lost</div><div>Back to 70 LP, so you'll get another shot</div></div></div>`;
+  const lpLine = rk.delta ? `<div style="font-size:16px;font-weight:700;margin-top:4px;color:${rk.delta > 0 ? 'var(--rt-teal)' : 'var(--rt-red)'}">${rk.delta > 0 ? '+' : ''}${rk.delta} LP</div>` : '';
+  ui.body.innerHTML = `
+    <div class="rt-res">
+      <div class="k">Ranked Solo · vs ${ui.vs.rank.name} Bot</div>
+      <div class="big" style="color:${g.won ? 'var(--rt-gold)' : 'var(--rt-red)'}">${g.won ? 'Victory' : 'Defeat'}</div>
+      ${lpLine}
+      ${banner}
+      <div style="margin-top:12px;text-align:left">${rankCard(R)}</div>
+      <div class="rt-stats" style="grid-template-columns:repeat(4,1fr)">${cells.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div>
+      ${ui.sessionAch.length ? `<div class="rt-sec" style="text-align:left">Unlocked</div><div class="rt-unl">${ui.sessionAch.map(id => {
+        const a = ACH.find(x => x.id === id);
+        return `<div><i>${achIcon(a.id)}</i><b>${a.name}</b><span>${a.desc}</span></div>`;
+      }).join('')}</div>` : ''}
+      <div class="rt-actions">
+        <button class="rt-btn ghost" data-act="lobby">Lobby</button>
+        <button class="rt-btn pri" data-act="queue">${R.series ? 'Next promo game' : 'Play again'}</button>
+      </div>
+    </div>`;
+}
+
+/* ---------- Profile ---------- */
+function renderProfile() {
+  setTab('profile');
+  ui.screen = 'profile';
+  const P = save.profile;
+  const C = CHARS[P.char] || CHARS.cat;
+  const colorIdx = P.color ?? C.color;
+  const itemChips = (list, key) => list.map(it => {
+    const ok = unlockedItem(it);
+    return `<button class="rt-chip2 ${P[key] === it.id ? 'on' : ''} ${ok ? '' : 'lock'}" data-act="${ok ? `prof:${key}:${it.id}` : ''}" title="${ok ? it.name : 'Locked: ' + it.hint}">
+      <canvas data-pv="${key}:${it.id}"></canvas><span class="tx"><span>${it.name}${ok ? '' : ` ${ICON_LOCK}`}</span>${ok ? '' : `<small>${it.hint}</small>`}</span></button>`;
+  }).join('');
+  ui.body.innerHTML = `
+    <div class="rt-prof">
+      <div class="big">
+        <div class="rt-scr"><canvas data-av="prof"></canvas></div>
+        <div class="rt-react">
+          ${['happy', 'excited', 'hurt', 'sad', 'cheer'].map(s => `<button class="rt-btn sm ghost" data-act="react:${s}">${s}</button>`).join('')}
+        </div>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div class="rt-sec">Player name</div>
+        <input class="rt-inp" maxlength="16" data-prof="name" value="${escapeHtml(P.name || '')}" placeholder="Summoner">
+        <div class="rt-note" style="margin-top:4px">Shows up next to your screen while you play and in Ranked.</div>
+        <div class="rt-sec rt-gap">Character</div>
+        <div class="rt-chips2">${CHAR_ORDER.map(id => `<button class="rt-chip2 ${P.char === id ? 'on' : ''}" data-act="prof:char:${id}"><canvas data-pv="char:${id}"></canvas>${CHARS[id].name}</button>`).join('')}</div>
+        <div class="rt-sec rt-gap">Color</div>
+        <div class="rt-chips2">${BODY_COLORS.map((c, i) => `<button class="rt-sw ${colorIdx === i ? 'on' : ''}" style="background:${c}" data-act="prof:color:${i}"></button>`).join('')}</div>
+      </div>
+    </div>
+    <div class="rt-sec rt-gap">Hat</div>
+    <div class="rt-chips2">${itemChips(HATS, 'hat')}</div>
+    <div class="rt-sec rt-gap">Face</div>
+    <div class="rt-chips2">${itemChips(FACES, 'face')}</div>
+    ${creditsHtml()}`;
+  ui.profReact = { state: 'idle', until: 0 };
+  // small previews are static: paint once
+  const t0 = 0.3;
+  ui.body.querySelectorAll('canvas[data-pv]').forEach(c => {
+    const [key, id] = c.dataset.pv.split(':');
+    const prof = { ...P, [key]: id };
+    if (key === 'char') prof.color = P.color;
+    paintAvatar(c, prof, 'idle', t0);
+  });
+}
+
+function paintProfile(ts) {
+  const c = ui.body.querySelector('canvas[data-av="prof"]');
+  if (!c) return;
+  const r = ui.profReact || { state: 'idle', until: 0 };
+  if (r.state !== 'idle' && performance.now() > r.until) r.state = 'idle';
+  paintAvatar(c, save.profile, r.state, ts / 1000);
+}
 
 function renderLadder() {
   setTab('play');
@@ -2485,15 +3080,18 @@ function renderLadder() {
     </div>`;
 }
 
-function startVersus(idx) {
+function startVersus(idx, ranked = false) {
   idx = Math.max(0, Math.min(RANKS.length - 1, idx));
+  Av.reset();
   const rank = RANKS[idx];
-  ui.sessionAch = []; ui.lastMode = 'versus'; ui.sel = 'versus'; ui.ladderSel = idx; ui.autosave = 0;
+  ui.sessionAch = []; ui.lastMode = ranked ? 'ranked' : 'versus'; ui.sel = ranked ? 'ranked' : 'versus'; if (!ranked) ui.ladderSel = idx; ui.autosave = 0;
   resetInput(); hideTurn(); setFocused(true);
   const player = new Game('versus', HOOKS());
+  player.ranked = ranked;
   player.sdf = save.settings.sdf;
   const ai = new Game('versus', {
     onAttack: (_, n) => { player.receive(n); if (n >= 4) Sfx.play('warn'); },
+    sfx: (n, d) => Av.event('ai', n, d),
     onFinish: () => {
       ai.ko = true;
       if (player.over) return;
@@ -2503,17 +3101,24 @@ function startVersus(idx) {
     },
   });
   player.hooks.onAttack = (_, n) => ai.receive(n);
-  ui.vs = { rank, idx, player, ai, bot: new Bot(ai, rank) };
+  ui.vs = { rank, idx, player, ai, bot: new Bot(ai, rank), ranked };
   ui.game = player;
   Music.stop(); Music.setRate(1);
   persist();
   renderGame();
 }
 
+function startRanked() {
+  const R = save.ranked;
+  const opp = R.series ? Math.min(RANKS.length - 1, R.tier + 1) : R.tier;
+  startVersus(opp, true);
+}
+
 function startGame(mode) {
   if (!MODES[mode]) return;
+  if (mode === 'ranked') { if (ui.game && !ui.game.over) storeResume(); ui.sel = 'ranked'; return renderLobby(); }
   if (mode === 'versus') { if (ui.game && !ui.game.over) storeResume(); ui.sel = 'versus'; ui.ladderSel = null; return renderLadder(); }
-  ui.vs = null;
+  ui.vs = null; Av.reset();
   if (ui.game && !ui.game.over) storeResume();
   if (save.resume && save.resume.mode === mode) clearResume();
   ui.sessionAch = []; ui.lastMode = mode; ui.sel = mode; ui.autosave = 0;
@@ -2530,7 +3135,7 @@ function continueSaved() {
   if (!r || !MODES[r.mode]) return renderMenu();
   ui.sessionAch = []; ui.lastMode = r.mode; ui.sel = r.mode; ui.autosave = 0;
   resetInput(); hideTurn(); setFocused(true);
-  ui.vs = null;
+  ui.vs = null; Av.reset();
   ui.game = Game.restore(r, HOOKS());
   ui.game.sdf = save.settings.sdf;
   Music.stop();
@@ -2594,9 +3199,10 @@ function onFinish(g) {
   const t = save.totals;
   t.games++; t.lines += g.lines; t.tetrises += g.stats.tetrises; t.tspins += g.stats.tspins;
   t.playMs += g.elapsed; t.pieces += g.stats.pieces;
-  save.played[g.mode] = (save.played[g.mode] || 0) + 1;
+  const modeKey = g.mode === 'versus' && ui.vs?.ranked ? 'ranked' : g.mode;
+  save.played[modeKey] = (save.played[modeKey] || 0) + 1;
   save.skinsUsed[save.settings.skin] = true;
-  save.history.unshift({ mode: g.mode, score: g.score, lines: g.lines, elapsed: g.elapsed, won: g.won, at: Date.now(), rank: g.mode === 'versus' && ui.vs ? ui.vs.rank.name : undefined });
+  save.history.unshift({ mode: modeKey, score: g.score, lines: g.lines, elapsed: g.elapsed, won: g.won, at: Date.now(), rank: g.mode === 'versus' && ui.vs ? ui.vs.rank.name : undefined });
   save.history = save.history.slice(0, 20);
 
   const b = save.best[g.mode] || {};
@@ -2621,8 +3227,12 @@ function onFinish(g) {
   if (g.mode === 'dig' && g.won) { unlock('dig'); if (g.elapsed < 45000) unlock('dig45'); }
   ui.vsPromoted = false;
   if (g.mode === 'versus' && ui.vs) {
-    const r = ui.vs.rank;
     ui.vs.ai.over = true;
+    if (!g.won) Av.set('ai', 'cheer', 0);
+  }
+  if (g.mode === 'versus' && ui.vs?.ranked) applyRanked(g.won, g);
+  else if (g.mode === 'versus' && ui.vs) {
+    const r = ui.vs.rank;
     const rec = save.versus.rec[r.id] || { w: 0, l: 0 };
     if (g.won) rec.w++; else rec.l++;
     save.versus.rec[r.id] = rec;
@@ -2686,7 +3296,9 @@ function loop(ts) {
     updateBadge();
     const g = ui.game;
     syncMusic(g);
+    if (ui.screen === 'profile') paintProfile(ts);
     if (!g || !ui.ctx || ui.screen !== 'game') return;
+    paintHudAvatars(ts);
     if (!g.paused && !g.over && g.countdown <= 0) das(dt);
     g.soft = ui.input.down && !g.paused;
     g.sdf = save.settings.sdf;
@@ -2746,7 +3358,7 @@ function onKey(e) {
   if (ui.screen !== 'game') {
     if (!down) return;
     if (ui.screen === 'menu') {
-      if (/^Digit[1-6]$/.test(e.code)) { stop(); return startGame(MODE_ORDER[+e.code.slice(5) - 1]); }
+      if (/^Digit[1-7]$/.test(e.code)) { stop(); return startGame(MODE_ORDER[+e.code.slice(5) - 1]); }
       if (e.code === 'ArrowDown' || e.code === 'ArrowUp') {
         stop();
         const i = MODE_ORDER.indexOf(ui.sel) + (e.code === 'ArrowDown' ? 1 : -1);
@@ -2756,7 +3368,11 @@ function onKey(e) {
       }
       if (e.code === 'Enter' || e.code === 'Space') { stop(); return startGame(ui.sel); }
     }
-    if (ui.screen === 'results' && (e.code === 'KeyR' || e.code === 'Enter')) { stop(); return ui.lastMode === 'versus' && ui.vs ? startVersus(ui.vs.idx) : startGame(ui.lastMode); }
+    if (ui.screen === 'results' && (e.code === 'KeyR' || e.code === 'Enter')) { stop(); return ui.lastMode === 'ranked' ? startRanked() : ui.lastMode === 'versus' && ui.vs ? startVersus(ui.vs.idx) : startGame(ui.lastMode); }
+    if (ui.screen === 'lobby') {
+      if (e.code === 'Enter' || e.code === 'Space') { stop(); return startRanked(); }
+      if (e.code === 'Escape') { stop(); return renderMenu(); }
+    }
     if (ui.screen === 'ladder') {
       if (e.code === 'ArrowDown' || e.code === 'ArrowUp') {
         stop();
@@ -2792,7 +3408,7 @@ function onKey(e) {
     if (!ui.turn.classList.contains('rt-hidden')) { hideTurn(); return; }
     return g.paused ? resumeGame() : pauseGame();
   }
-  if (e.code === 'KeyR') { if (!e.repeat) (g.mode === 'versus' ? startVersus(ui.vs.idx) : startGame(g.mode)); return; }
+  if (e.code === 'KeyR') { if (!e.repeat && !ui.vs?.ranked) (g.mode === 'versus' ? startVersus(ui.vs.idx) : startGame(g.mode)); return; }
   if (e.code === 'Enter' && g.paused) return resumeGame();
   if (g.paused || g.over) return;
 
@@ -2845,7 +3461,7 @@ function bindGlobal() {
   }
   on(window, 'blur', () => { if (ui.open) pauseGame(); });
   on(window, 'resize', () => { if (ui.root) applyGeom(); if (ui.fab && save.settings.fabPos) placeFab(save.settings.fabPos.left, save.settings.fabPos.top); });
-  on(window, 'beforeunload', () => { storeResume(); persist(); });
+  on(window, 'beforeunload', () => { if (ui.vs?.ranked && ui.game && !ui.game.over && ui.game.elapsed > 0) applyRanked(false, ui.game); storeResume(); persist(); });
   // the client sometimes rebuilds the page — put our elements back if they disappear
   ui.watch = setInterval(() => {
     if (!ui.fab?.isConnected || !ui.root?.isConnected || !document.getElementById('rt-style')) safe(mount)();

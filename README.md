@@ -4,7 +4,7 @@
 
 **Modern Tetris inside the League of Legends client. Built for champ select.**
 
-A [Pengu Loader](https://pengu.lol) plugin · 6 game modes · 36 achievements · 5 skins · music & sound effects · zero setup
+A [Pengu Loader](https://pengu.lol) plugin · 7 game modes · 42 achievements · playable characters · 5 skins · music & sound effects · zero setup
 
 <img src="assets/game.png" width="420" alt="RiftTris in-game">
 
@@ -19,8 +19,10 @@ Champ select lasts about 90 seconds and you spend most of it staring at a timer.
 ## Features
 
 - **Modern Tetris engine:** SRS rotation with wall kicks, 7-bag randomizer, hold, 5-piece preview, ghost piece, lock delay, T-Spins (including minis), back-to-back, combos and Perfect Clears.
-- **6 game modes:** a 90-second score attack, a 40-line sprint, a marathon, a garbage dig, a no-pressure zen mode and **Versus AI**.
+- **7 game modes:** a 90-second score attack, a 40-line sprint, a marathon, a garbage dig, a no-pressure zen mode, **Versus AI** and **Ranked Solo**.
 - **Versus AI, ranked:** battle a bot on a second board. Clear lines to send garbage, and the first one to top out loses. The AI comes in 10 League ranks, from Iron (slow and sloppy) to Challenger (3.4 pieces per second, perfect placement). Pick any rank or hit **Climb** to fight the next one above yours. Each rank you beat unlocks its own achievement.
+- **Ranked Solo (tryhard):** you have a fixed rank with LP. A win gives about +20 LP and a loss costs −18. At 100 LP you play a best-of-3 **promotion series** against the next tier's bot. Every tier has a demotion shield, and if you keep losing at 0 LP, or fall too far below even in a tier, you drop a tier. There are no restarts, and surrendering or closing the client mid-game counts as a loss.
+- **Your own character:** set your player name and pick one of 6 original characters (cat, fox, slime, robot, ghost, penguin). You can change their color and give them a hat and a face accessory, and some of those unlock with achievements. They sit in a little screen next to your name while you play and react live: they cheer on line clears, go wild on Tetrises and T-Spins, flinch when garbage hits, sweat when your stack gets tall, and cry or celebrate at the end. In Versus, the bot gets its own screen too.
 - **Champ select integration:**
   - The Tetris icon starts a Rapid game with one click.
   - The phase timer shows in the title bar.
@@ -30,9 +32,23 @@ Champ select lasts about 90 seconds and you spend most of it staring at a timer.
 - **5 skins:** Hextech, Retro, 3D, Neon and Pastel. Each one restyles the board *and* the whole interface.
 - **Background music:** the Tetris theme loops seamlessly in the background. The plugin finds the loop point in the track on its own, fades in smoothly and pauses together with the game. Want a different song? Swap `music.mp3` in the plugin folder for any track you like and the loop point is detected automatically.
 - **Sound effects** for moves, rotations, line clears, T-Spins, combos (the pitch rises as the combo grows), level ups and the final countdown. Each skin has its own sound, and the Retro one is proper chiptune. Volume is adjustable and **M** mutes.
-- **36 achievements** named after League moments (First Blood, Pentakill, Ace, Outplayed…), each with its own icon. When you unlock one, a Steam-style popup slides in at the bottom-right corner. You also get lifetime stats and your recent games.
+- **42 achievements** named after League moments (First Blood, Pentakill, Ace, Outplayed…), each with its own icon. When you unlock one, a Steam-style popup slides in at the bottom-right corner. You also get lifetime stats and your recent games.
 - **Progress that sticks around:** records, achievements, settings and even unfinished games survive client restarts. You can move your save to another PC with a backup code.
 - **Tunable handling:** DAS, ARR and soft drop speed, for people who take their Tetris seriously.
+
+## Versus AI & Ranked Solo
+
+<img src="assets/versus.png" alt="Versus AI match">
+
+Clear lines to send garbage to the bot, and the first one to top out loses. Every rank has its own bot, from Iron to Challenger, and both players get a little screen with their character reacting live.
+
+## Your character
+
+<img src="assets/profile.png" width="420" align="right" alt="Profile">
+
+Pick a name, a character (cat, fox, slime, robot, ghost or penguin), a color, a hat and a face accessory. Locked items show exactly how to unlock them.
+
+<br clear="right">
 
 ## Skins
 
@@ -59,7 +75,8 @@ Switch skins in **Settings**, or press **V** at any time.
 | **Classic** | Marathon. You level up every 10 lines until you top out. |
 | **Dig** | Clear 10 rows of garbage from the bottom of the board. |
 | **Zen** | No game over. Good for waiting in queue. |
-| **Versus AI** | Beat a bot on a second board. 10 ranks from Iron to Challenger. |
+| **Versus AI** | Beat a bot on a second board. Pick any of the 10 ranks, from Iron to Challenger. |
+| **Ranked Solo** | A fixed rank with LP, promotion series and demotions. |
 
 Sprint, Classic, Dig and Zen autosave while you play, so you can close the client and continue later.
 
@@ -85,12 +102,12 @@ Sprint, Classic, Dig and Zen autosave while you play, so you can close the clien
 | Change skin | `V` |
 | Mute all sound | `M` |
 | Open / close | `Alt+T` or `F8` |
-| Quick start a mode | `1` – `6` |
+| Quick start a mode | `1` – `7` |
 
 When you click anywhere in the client, the game pauses and stops capturing your keyboard, so typing in the client is never blocked. Click the window to keep playing.
 
 <details>
-<summary><b>All 36 achievements</b></summary>
+<summary><b>All 42 achievements</b></summary>
 
 | Achievement | How to unlock |
 |---|---|
@@ -130,6 +147,12 @@ When you click anywhere in the client, the game pauses and stops capturing your 
 | Grandmaster Flash | Beat the Grandmaster AI |
 | Apex Predator | Beat the Challenger AI |
 | Flawless Victory | Beat Gold or higher without taking a single garbage line |
+| Placements Done | Win your first Ranked Solo game |
+| Promoted | Win a promotion series |
+| Clean Sweep | Win a promotion series 2-0 |
+| Gold Standard | Reach Gold in Ranked Solo |
+| Shine Bright | Reach Diamond in Ranked Solo |
+| Top of the Ladder | Reach Challenger in Ranked Solo |
 
 </details>
 
